@@ -1,0 +1,401 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+  /* 记分牌 + 勋章风配色（OKLCH，避免纯黑纯白与泛 AI 青紫渐变） */
+  --paper: oklch(97% 0.013 88); /* 奶油纸面 */
+  --paper-2: oklch(94% 0.016 88); /* 纸面略深（分区/底栏） */
+  --ink: oklch(27% 0.03 150); /* 浅底主文字：深森林墨 */
+  --ink-soft: oklch(45% 0.02 150); /* 浅底次文字 */
+  /* 绿茵场（数据看板页背景） */
+  --pitch-bg: oklch(30% 0.085 150); /* 深绿球场主色 */
+  --pitch-bg-2: oklch(33% 0.09 150); /* 割草纹浅色带 */
+  --board: oklch(16% 0.028 155); /* LED 记分牌表面：近黑深绿（非纯黑） */
+  --board-2: oklch(20% 0.032 155); /* 记分牌抬升面 */
+  --board-well: oklch(10% 0.022 155); /* 记分牌内凹显示窗 */
+  --board-line: oklch(32% 0.04 155); /* 记分牌分隔线 */
+  --gold: oklch(82% 0.14 88); /* 金色：勋章 / 记分牌数字 */
+  --gold-deep: oklch(67% 0.15 82); /* 深金：勋章描边 */
+  --on-board: oklch(93% 0.018 88); /* 深底主文字：奶油 */
+  --on-board-soft: oklch(80% 0.02 88); /* 深底次文字 */
+  --on-board-dim: oklch(68% 0.02 150); /* 深底弱化文字 */
+  /* 位置色（深底小徽章用） */
+  --pos-fwd: oklch(66% 0.16 25); /* 前锋 */
+  --pos-mid: oklch(74% 0.13 150); /* 中场 */
+  --pos-back: oklch(69% 0.11 245); /* 后卫 */
+  /* 胜负结果色（比分/胜负标签/总结用） */
+  --win: oklch(80% 0.15 150); /* 胜：亮绿金 */
+  --loss: oklch(72% 0.16 25); /* 负：暖红 */
+  --draw: oklch(82% 0.03 88); /* 平：暖灰 */
+  /* 记分牌数字专用字体：等宽数字更有 LED 记分牌感 */
+  --font-score: 'SF Mono', 'Menlo', 'Monaco', 'Roboto Mono', 'Courier New', monospace;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background-color: var(--paper);
+  color: var(--ink);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* 绿茵场渐变背景（首页/hero 使用） */
+.pitch-gradient {
+  background-color: #14532d;
+  background-image:
+    radial-gradient(ellipse at 20% 20%, rgba(134, 239, 172, 0.35), transparent 55%),
+    radial-gradient(ellipse at 80% 10%, rgba(74, 222, 128, 0.3), transparent 50%),
+    linear-gradient(160deg, #14532d 0%, #166534 45%, #15803d 100%);
+}
+
+.pitch-grid {
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.06) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.06) 1px, transparent 1px);
+  background-size: 44px 44px;
+}
+
+/* 数据看板页：深绿球场 + 草皮纹理（割草纹 + 细草叶颗粒，非纯色平铺） */
+.report-pitch {
+  color: var(--on-board);
+  background-color: var(--pitch-bg);
+  background-image:
+    radial-gradient(ellipse at 50% -12%, color-mix(in oklab, var(--pitch-bg-2) 55%, transparent), transparent 58%),
+    repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.016) 0 1px, transparent 1px 3px),
+    repeating-linear-gradient(to bottom, var(--pitch-bg-2) 0 110px, var(--pitch-bg) 110px 220px);
+}
+
+/* 隐藏滚动条但保留滚动 */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* 卡片基础样式 */
+.card {
+  @apply rounded-2xl bg-white shadow-card border border-slate-100;
+}
+
+.btn-primary {
+  @apply inline-flex items-center justify-center gap-2 rounded-xl bg-pitch-700 px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-pitch-800 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50;
+}
+
+.btn-secondary {
+  @apply inline-flex items-center justify-center gap-2 rounded-xl bg-white px-5 py-3 text-sm font-semibold text-slate-700 shadow-sm ring-1 ring-slate-200 transition hover:bg-slate-50 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50;
+}
+
+.input-base {
+  @apply w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-pitch-600 focus:ring-2 focus:ring-pitch-600/15;
+}
+
+/* ---------------------------------------------------------------------------
+   记分牌 + 勋章风（数据看板专用）
+   --------------------------------------------------------------------------- */
+
+/* 记分牌面板：深绿表面 + 金色上沿，取代白色卡片 */
+.scoreboard {
+  background: linear-gradient(180deg, var(--board-2), var(--board));
+  color: var(--on-board);
+  border: 1px solid var(--board-line);
+  border-top: 3px solid var(--gold);
+  border-radius: 10px;
+  box-shadow: 0 12px 32px -14px rgba(0, 18, 8, 0.6);
+}
+
+/* 记分牌内凹显示窗（数字区域，像 LED 显示屏） */
+.score-well {
+  position: relative;
+  overflow: hidden;
+  container-type: inline-size;
+  background: var(--board-well);
+  border: 1px solid var(--board-line);
+  border-radius: 8px;
+  box-shadow:
+    inset 0 3px 9px rgba(0, 18, 8, 0.65),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.05);
+}
+
+/* LED 点阵纹理（极淡，增加显示屏质感） */
+.score-well::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background-image: radial-gradient(rgba(255, 255, 255, 0.05) 1px, transparent 1.4px);
+  background-size: 4px 4px;
+  pointer-events: none;
+}
+
+/* 记分牌大数字 */
+.font-score {
+  font-family: var(--font-score);
+}
+
+.score-digit {
+  font-family: var(--font-score);
+  font-weight: 900;
+  /* 先按视口兜底，再用容器查询随卡片列宽自适应（双列/单列均成立） */
+  font-size: clamp(3.25rem, 13vw, 6.5rem);
+  font-size: clamp(3rem, 28cqw, 6.5rem);
+  line-height: 0.9;
+  color: var(--gold);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.03em;
+  text-shadow: 0 2px 0 rgba(0, 18, 8, 0.55);
+}
+
+.score-unit {
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: var(--on-board-soft);
+}
+
+/* 勋章：金质奖章 + 称号文字 */
+.medal {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 3px 10px 3px 4px;
+  border-radius: 9999px;
+  background: color-mix(in oklab, var(--gold) 16%, transparent);
+  border: 1px solid color-mix(in oklab, var(--gold) 55%, transparent);
+}
+
+.medal-coin {
+  position: relative;
+  overflow: hidden;
+  width: 24px;
+  height: 24px;
+  border-radius: 9999px;
+  display: grid;
+  place-items: center;
+  background: radial-gradient(circle at 32% 26%, oklch(93% 0.07 92), var(--gold) 46%, var(--gold-deep) 100%);
+  color: var(--board);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in oklab, oklch(96% 0.03 92) 45%, transparent),
+    inset 0 -2px 3px rgba(0, 18, 8, 0.3),
+    0 2px 6px rgba(0, 18, 8, 0.4);
+}
+
+/* 金质奖章高光（光泽） */
+.medal-coin::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle at 30% 20%, rgba(255, 255, 255, 0.85) 0%, rgba(255, 255, 255, 0) 42%);
+  pointer-events: none;
+}
+
+.medal-coin svg {
+  width: 12px;
+  height: 12px;
+}
+
+.medal-label {
+  font-weight: 800;
+  font-size: 0.82rem;
+  letter-spacing: 0.03em;
+  color: var(--gold);
+}
+
+/* 位置徽章（深底小徽章） */
+.pos-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 9px;
+  border-radius: 9999px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  border: 1px solid;
+  line-height: 1.4;
+}
+
+.pos-forward {
+  color: var(--pos-fwd);
+  border-color: color-mix(in oklab, var(--pos-fwd) 55%, transparent);
+  background: color-mix(in oklab, var(--pos-fwd) 15%, transparent);
+}
+
+.pos-mid {
+  color: var(--pos-mid);
+  border-color: color-mix(in oklab, var(--pos-mid) 55%, transparent);
+  background: color-mix(in oklab, var(--pos-mid) 15%, transparent);
+}
+
+.pos-back {
+  color: var(--pos-back);
+  border-color: color-mix(in oklab, var(--pos-back) 55%, transparent);
+  background: color-mix(in oklab, var(--pos-back) 15%, transparent);
+}
+
+/* ---------------------------------------------------------------------------
+   动效（依据 impeccable animate 规范）
+   --------------------------------------------------------------------------- */
+
+/* 卡片 stagger 入场：依次滑入 + 淡入（stagger 由内联 animation-delay 控制） */
+.card-enter {
+  animation: card-enter 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes card-enter {
+  from {
+    opacity: 0;
+    transform: translateY(18px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* 勋章「叮」弹出：scale 0.6 → 1 带轻微 overshoot（ease-out-expo，非 bounce/elastic） */
+.medal-pop {
+  animation: medal-pop 0.45s cubic-bezier(0.16, 1, 0.3, 1) 0.15s both;
+}
+
+@keyframes medal-pop {
+  0% {
+    opacity: 0;
+    transform: scale(0.6);
+  }
+  60% {
+    opacity: 1;
+    transform: scale(1.08);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* 综合分弱化：显示窗右上角小方块 */
+.score-corner {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-width: 46px;
+  padding: 5px 7px;
+  border: 1px solid var(--board-line);
+  border-radius: 6px;
+  background: color-mix(in oklab, var(--board) 42%, var(--board-well));
+}
+
+.score-corner-num {
+  font-family: var(--font-score);
+  font-size: 0.95rem;
+  font-weight: 800;
+  line-height: 1;
+  color: var(--on-board-soft);
+  font-variant-numeric: tabular-nums;
+}
+
+.score-corner-label {
+  margin-top: 3px;
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  color: var(--on-board-dim);
+}
+
+/* 比分与球队评分大数字（记分牌风，比球员 hero 略收敛） */
+.score-number {
+  font-family: var(--font-score);
+  font-weight: 900;
+  font-size: clamp(2.5rem, 11vw, 4.5rem);
+  font-size: clamp(2.25rem, 20cqw, 4.5rem);
+  line-height: 1;
+  color: var(--gold);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+  text-shadow: 0 2px 0 rgba(0, 18, 8, 0.55);
+}
+
+.score-colon {
+  font-family: var(--font-score);
+  font-weight: 900;
+  font-size: clamp(2rem, 9vw, 3.5rem);
+  line-height: 1;
+  color: var(--on-board-dim);
+}
+
+/* 胜负标签：胜 / 负 / 平 徽章 */
+.outcome-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 46px;
+  padding: 4px 16px;
+  border-radius: 9999px;
+  font-weight: 900;
+  font-size: 1rem;
+  letter-spacing: 0.12em;
+  border: 1px solid;
+  line-height: 1.4;
+}
+
+.outcome-win {
+  color: var(--win);
+  border-color: color-mix(in oklab, var(--win) 55%, transparent);
+  background: color-mix(in oklab, var(--win) 16%, transparent);
+}
+
+.outcome-loss {
+  color: var(--loss);
+  border-color: color-mix(in oklab, var(--loss) 55%, transparent);
+  background: color-mix(in oklab, var(--loss) 16%, transparent);
+}
+
+.outcome-draw {
+  color: var(--draw);
+  border-color: color-mix(in oklab, var(--draw) 55%, transparent);
+  background: color-mix(in oklab, var(--draw) 14%, transparent);
+}
+
+/* 比赛总结主结论（赢/平=最大亮点，输=最大可提升点） */
+.summary-headline {
+  font-weight: 800;
+  font-size: 1.18rem;
+  line-height: 1.45;
+  color: var(--gold);
+}
+
+/* 演示数据说明条（深色球场上的金色提示条） */
+.demo-note {
+  background: color-mix(in oklab, var(--gold) 12%, var(--board));
+  border: 1px solid color-mix(in oklab, var(--gold) 30%, transparent);
+  color: var(--on-board-soft);
+}
+
+.demo-badge {
+  background: color-mix(in oklab, var(--gold-deep) 30%, transparent);
+  color: var(--gold);
+}
+
+/* 尊重系统减少动效偏好：一律降级为无动效直接显示 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

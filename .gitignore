@@ -1,0 +1,16 @@
+# 依赖
+node_modules/
+
+# 构建产物
+dist/
+.vite/
+
+# Vite 临时文件
+vite.config.ts.timestamp-*.mjs
+
+# 系统
+.DS_Store
+
+# 工作助手内部记忆（不上传）
+.workbuddy/
+
