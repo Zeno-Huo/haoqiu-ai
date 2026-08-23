@@ -26,7 +26,7 @@ const SCORE_BASE = 6
 const SCORE_MIN = 3
 const SCORE_MAX = 10
 
-const SCORE_WEIGHTS: Record<keyof Pick<PlayerStats, 'touchesSuccess' | 'passesSuccess' | 'shotsOnTarget' | 'dribbles' | 'interceptions' | 'tackles' | 'turnovers'>, number> = {
+const SCORE_WEIGHTS: Record<keyof Pick<PlayerStats, 'touchesSuccess' | 'passesSuccess' | 'shotsOnTarget' | 'dribbles' | 'interceptions' | 'tackles' | 'turnovers' | 'dispossessed'>, number> = {
   touchesSuccess: 0.2, // 拿球成功
   passesSuccess: 0.25, // 传球成功
   shotsOnTarget: 0.5, // 射正（威胁最大）
@@ -34,6 +34,7 @@ const SCORE_WEIGHTS: Record<keyof Pick<PlayerStats, 'touchesSuccess' | 'passesSu
   interceptions: 0.3, // 拦截
   tackles: 0.3, // 抢断
   turnovers: 0.6, // 失误（扣分）
+  dispossessed: 0.55, // 持球被断（扣分）
 }
 
 // ---------------------------------------------------------------------------
@@ -46,9 +47,9 @@ function clamp(v: number, min: number, max: number): number {
 
 /** 事件类型加权池：按场上位置区分侧重（前锋射门/突破多，中场传球/拿球多，后卫拦截/抢断多） */
 const EVENT_POOL_BY_POSITION: Record<Position, EventType[]> = {
-  前锋: ['射门', '射门', '射门', '突破', '突破', '突破', '拿球', '拿球', '传球', '传球'],
-  中场: ['传球', '传球', '传球', '传球', '拿球', '拿球', '拿球', '突破', '射门', '拦截'],
-  后卫: ['拦截', '拦截', '拦截', '抢断', '抢断', '抢断', '拿球', '拿球', '传球', '传球'],
+  前锋: ['射门', '射门', '射门', '突破', '突破', '突破', '拿球', '拿球', '传球', '传球', '被断'],
+  中场: ['传球', '传球', '传球', '传球', '拿球', '拿球', '拿球', '突破', '射门', '拦截', '被断'],
+  后卫: ['拦截', '拦截', '拦截', '抢断', '抢断', '抢断', '拿球', '拿球', '传球', '传球', '被断'],
 }
 
 /**
@@ -74,7 +75,7 @@ function buildEvents(match: Match, position: Position, skill: number, rng: Rng):
 
     const type = rng.pick(pool)
     const roll = rng.next()
-    const outcome: EventOutcome = roll < goodP ? '成功' : roll < goodP + midP ? '一般' : '失误'
+    const outcome: EventOutcome = type === '被断' ? '失误' : roll < goodP ? '成功' : roll < goodP + midP ? '一般' : '失误'
 
     events.push({ time: t, type, outcome, note: noteFor(type, outcome) })
   }
@@ -91,11 +92,12 @@ function noteFor(type: EventType, outcome: EventOutcome): string {
     突破: '尝试突破防守',
     拦截: '拦截对方传球',
     抢断: '上抢断球',
+    被断: '持球时被对手断下',
   }
   return `${scene[type]}，${good}`
 }
 
-/** 从事件聚合出客观数据统计（10 项） */
+/** 从事件聚合出客观数据统计。传球失误由 passes - passesSuccess 派生，不重复计入 turnovers。 */
 function buildStats(events: PlayerEvent[]): PlayerStats {
   const count = (type: EventType, outcome?: EventOutcome) =>
     events.filter((e) => e.type === type && (!outcome || e.outcome === outcome)).length
@@ -103,7 +105,8 @@ function buildStats(events: PlayerEvent[]): PlayerStats {
   return {
     touches: count('拿球'),
     touchesSuccess: count('拿球', '成功'),
-    turnovers: events.filter((e) => e.outcome === '失误').length,
+    turnovers: events.filter((e) => e.outcome === '失误' && e.type !== '传球' && e.type !== '被断').length,
+    dispossessed: count('被断'),
     passes: count('传球'),
     passesSuccess: count('传球', '成功'),
     shots: count('射门'),
@@ -124,17 +127,20 @@ export function scoreFromStats(s: PlayerStats): number {
     s.dribbles * SCORE_WEIGHTS.dribbles +
     s.interceptions * SCORE_WEIGHTS.interceptions +
     s.tackles * SCORE_WEIGHTS.tackles -
-    s.turnovers * SCORE_WEIGHTS.turnovers
+    s.turnovers * SCORE_WEIGHTS.turnovers -
+    s.dispossessed * SCORE_WEIGHTS.dispossessed
   return Math.round(clamp(raw, SCORE_MIN, SCORE_MAX) * 10) / 10
 }
 
 /** 基于客观 stats 生成分析点评（每句都能追溯到具体数据，不是空话） */
 function buildInsights(s: PlayerStats): string[] {
   const out: string[] = []
-  if (s.touches >= 6 && s.turnovers <= 1) {
+  const passErrors = Math.max(0, s.passes - s.passesSuccess)
+  const totalErrors = s.turnovers + s.dispossessed + passErrors
+  if (s.touches >= 6 && totalErrors <= 1) {
     out.push('拿球处理稳健，失误控制出色')
-  } else if (s.turnovers >= 3) {
-    out.push(`本场失误 ${s.turnovers} 次，第一脚处理与护球需加强`)
+  } else if (totalErrors >= 3) {
+    out.push(`本场可见失误 ${totalErrors} 次，第一脚处理与护球需加强`)
   } else if (s.touches <= 2) {
     out.push('拿球次数偏少，可更主动要球接应')
   }
@@ -286,7 +292,7 @@ export function buildMatchSummary(match: Match, analyses: PlayerAnalysis[]): Mat
   const totalPassesSuccess = sum('passesSuccess')
   const totalShots = sum('shots')
   const totalShotsOnTarget = sum('shotsOnTarget')
-  const totalTurnovers = sum('turnovers')
+  const totalTurnovers = sum('turnovers') + sum('dispossessed') + Math.max(0, totalPasses - totalPassesSuccess)
   const defense = sum('interceptions') + sum('tackles')
 
   const passRate = totalPasses > 0 ? totalPassesSuccess / totalPasses : 0
