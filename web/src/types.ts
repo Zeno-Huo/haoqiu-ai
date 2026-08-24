@@ -1,5 +1,6 @@
 // 好球Ai · MVP 阶段一 数据类型定义
 import type { DetectionJob } from './detectionTypes'
+import type { CloudDetectionJob } from './cloudDetectionTypes'
 
 export type MatchType = '5v5' | '7v7' | '11v11'
 
@@ -67,6 +68,10 @@ export interface Match {
   /** 真实检测任务可刷新恢复；与本地球队复盘 Demo 分开。 */
   detectionJobId?: string
   detectionJob?: DetectionJob
+  /** COS 整段视频已上传后才持久化 upload_id；不保存任何签名 URL。 */
+  cloudUploadId?: string
+  cloudJobId?: string
+  cloudDetectionJob?: CloudDetectionJob
   players: Player[]
   analysis?: PlayerAnalysis[]
   createdAt: number

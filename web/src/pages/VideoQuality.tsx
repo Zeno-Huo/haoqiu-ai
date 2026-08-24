@@ -1,6 +1,6 @@
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { getMatch } from '../lib/storage'
-import { isDetectionServiceConfigured } from '../lib/detectionApi'
+import { isCloudDetectionConfigured } from '../lib/cloudDetectionApi'
 import { getCachedVideoFile } from '../lib/videoFileCache'
 
 function formatBytes(value?: number) {
@@ -26,9 +26,9 @@ export default function VideoQuality() {
   }
 
   const meta = match.videoMeta
-  const serviceConfigured = isDetectionServiceConfigured()
+  const serviceConfigured = isCloudDetectionConfigured()
   const hasFile = Boolean(getCachedVideoFile(match.id))
-  const canResumeReal = serviceConfigured && Boolean(match.detectionJobId)
+  const canResumeReal = serviceConfigured && Boolean(match.cloudUploadId || match.cloudJobId)
   const canStartReal = serviceConfigured && hasFile && match.videoSource === 'local-file'
   const portrait = Boolean(meta?.width && meta?.height && meta.height > meta.width)
   const narrow = Boolean(meta?.width && meta.width < 960)
