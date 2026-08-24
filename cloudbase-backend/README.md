@@ -30,13 +30,15 @@ PUT URL 最长 15 分钟，但 pending 上传记录默认保留 24 小时。因�
 
 worker（均需服务身份）：
 
-- `POST /v1/worker/tasks/claim`：`worker_id`、`lease_seconds`，成功响应为 `{task: {...}}`
+- `POST /v1/worker/tasks/claim`：`worker_id`、`lease_seconds`，成功响应为 `{task: {...}}`；task 同时包含审计用 object key 和仅针对该 key 的 `input_download_url/output_upload_url`
 - `POST /v1/worker/tasks/{task_id}/renew`：`lease_token`、`lease_seconds`
 - `POST /v1/worker/tasks/{task_id}/progress`：`lease_token`、`progress`、`stage`、可选 `eta_seconds`
 - `POST /v1/worker/tasks/{task_id}/complete`：`lease_token`、`result.artifact`、`result.detection`，幂等键放在 `Idempotency-Key` 请求头
 - `POST /v1/worker/tasks/{task_id}/fail`：`lease_token`、`retryable`、`error {code,message}`
 
 worker 请求除 Bearer 身份外还必须携带 `X-CloudBase-Env: haoqiu-ai-prod-d3g2cm2xn3255c273`，防止跨环境误投。状态写入成功返回 `{accepted:true,task?:...}`。
+
+claim 中的 COS GET/PUT 签名 URL 默认有效 4 小时，配置上限为 6 小时，只能操作该任务由服务端生成的输入/输出 key。URL 不写入数据库或日志；现有 `input_object_key/output_object_key` 继续保留以兼容 HAI 当前契约和用于审计。HAI 切换到签名 URL 后无需持有 COS 永久密钥。
 
 claim、续租、进度和终态更新均使用数据库事务。所有 worker 写入都校验 `task_id + lease_token + lease_expires_at`；完成接口对幂等键重放返回相同结果。可重试失败使用指数退避，最多三次。
 

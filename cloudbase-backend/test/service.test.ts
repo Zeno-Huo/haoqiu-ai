@@ -1,19 +1,21 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { requireUser, requireWorker } from "../src/auth";
-import { loadTencentCredentials } from "../src/config";
+import { loadConfig, loadTencentCredentials } from "../src/config";
 import type { Config } from "../src/config";
 import type { ObjectMetadata, ObjectStore } from "../src/cos";
 import type { TaskRepository } from "../src/repository";
 import { TaskService } from "../src/service";
-import { haiCompletionBody, publicTask } from "../src/http-contract";
+import { haiCompletionBody, publicTask, workerTask } from "../src/http-contract";
 import { ApiError } from "../src/types";
 import type { TaskRecord, UploadRecord } from "../src/types";
 
 class FakeObjects implements ObjectStore {
   metadata = new Map<string, ObjectMetadata>();
-  async signedPutUrl(key: string) { return `https://upload.invalid/${key}?short-signature`; }
-  async signedGetUrl(key: string) { return `https://download.invalid/${key}?short-signature`; }
+  putSignatures: Array<{ key: string; expiresSeconds: number }> = [];
+  getSignatures: Array<{ key: string; expiresSeconds: number }> = [];
+  async signedPutUrl(key: string, expiresSeconds: number) { this.putSignatures.push({ key, expiresSeconds }); return `https://upload.invalid/${key}?short-signature`; }
+  async signedGetUrl(key: string, expiresSeconds: number) { this.getSignatures.push({ key, expiresSeconds }); return `https://download.invalid/${key}?short-signature`; }
   async head(key: string) { const value = this.metadata.get(key); if (!value) throw new ApiError(409, "UPLOAD_NOT_FOUND", "missing"); return value; }
 }
 
@@ -55,7 +57,7 @@ class MemoryRepository implements TaskRepository {
 
 const config: Config = {
   envId: "test", bucket: "haoqiu-ai-media-1352817304", region: "ap-shanghai",
-  uploadUrlSeconds: 600, pendingUploadSeconds: 86400, resultUrlSeconds: 600, rawRetentionDays: 7, resultRetentionDays: 30,
+  uploadUrlSeconds: 600, pendingUploadSeconds: 86400, resultUrlSeconds: 600, workerUrlSeconds: 14400, rawRetentionDays: 7, resultRetentionDays: 30,
   maxUploadBytes: 300 * 1024 * 1024, maxDurationSeconds: 900, maxLeaseSeconds: 120,
   workerToken: "worker-secret", allowTestIdentity: true
 };
@@ -81,6 +83,16 @@ test("COS credentials prefer standard Tencent Cloud names and support legacy fal
   assert.deepEqual(loadTencentCredentials({
     TENCENT_SECRET_ID: "legacy-id", TENCENT_SECRET_KEY: "legacy-key", TENCENT_SESSION_TOKEN: "legacy-token"
   }), { SecretId: "legacy-id", SecretKey: "legacy-key", SecurityToken: "legacy-token" });
+});
+
+test("worker signed URL lifetime is capped at six hours", () => {
+  const previous = process.env.WORKER_URL_SECONDS;
+  process.env.WORKER_URL_SECONDS = String(24 * 60 * 60);
+  try { assert.equal(loadConfig().workerUrlSeconds, 6 * 60 * 60); }
+  finally {
+    if (previous === undefined) delete process.env.WORKER_URL_SECONDS;
+    else process.env.WORKER_URL_SECONDS = previous;
+  }
 });
 
 test("HAI completion contract maps idempotency header and nested result", () => {
@@ -123,6 +135,16 @@ test("confirm, atomic lease flow, deterministic output and completion idempotenc
   assert.strictEqual(await api.confirmUpload("u1", ticket.upload_id, "m1"), task);
   const claimed = await api.claim({ worker_id: "hai-1", lease_seconds: 60 });
   assert.equal(claimed?.attempt, 1); assert.ok(claimed?.lease_token);
+  assert.equal(claimed?.input_object_key, inputKey);
+  assert.match(claimed!.input_download_url, /^https:\/\/download\.invalid\/inputs\//);
+  assert.match(claimed!.output_upload_url, /^https:\/\/upload\.invalid\/outputs\//);
+  assert.equal(new Date(claimed!.signed_url_expires_at).getTime(), current.getTime() + 14_400_000);
+  assert.deepEqual(objects.getSignatures.at(-1), { key: task.input_object_key, expiresSeconds: 14_400 });
+  assert.deepEqual(objects.putSignatures.at(-1), { key: task.output_object_key, expiresSeconds: 14_400 });
+  const claimedPayload = workerTask(claimed!);
+  assert.equal(claimedPayload!.input_object_key, inputKey);
+  assert.equal(claimedPayload!.input_download_url, claimed!.input_download_url);
+  assert.equal(claimedPayload!.output_upload_url, claimed!.output_upload_url);
   await api.progress({ task_id: task._id, lease_token: claimed!.lease_token, progress: 50, stage: "detecting" });
   const completeBody = { task_id: task._id, lease_token: claimed!.lease_token, idempotency_key: "result-etag-v1", output: { object_key: task.output_object_key, etag: "result-etag", size_bytes: 999 }, diagnostics: { processed_frames: 10 } };
   const completed = await api.complete(completeBody);

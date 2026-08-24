@@ -93,7 +93,18 @@ export class TaskService {
     const workerId = String(body.worker_id || "");
     if (!/^[a-zA-Z0-9:_-]{1,128}$/.test(workerId)) throw new ApiError(400, "INVALID_WORKER_ID", "worker_id is invalid");
     const leaseSeconds = Math.min(number(body.lease_seconds, "lease_seconds"), this.config.maxLeaseSeconds);
-    return this.repo.claim(workerId, leaseSeconds, this.now());
+    const task = await this.repo.claim(workerId, leaseSeconds, this.now());
+    if (!task) return null;
+    const [inputDownloadUrl, outputUploadUrl] = await Promise.all([
+      this.objects.signedGetUrl(task.input_object_key, this.config.workerUrlSeconds),
+      this.objects.signedPutUrl(task.output_object_key, this.config.workerUrlSeconds)
+    ]);
+    return {
+      ...task,
+      input_download_url: inputDownloadUrl,
+      output_upload_url: outputUploadUrl,
+      signed_url_expires_at: new Date(this.now().getTime() + this.config.workerUrlSeconds * 1000).toISOString()
+    };
   }
   renew(body: any) { return this.repo.renew(String(body.task_id), String(body.lease_token), Math.min(number(body.lease_seconds, "lease_seconds"), this.config.maxLeaseSeconds), this.now()); }
   progress(body: any) {

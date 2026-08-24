@@ -17,10 +17,18 @@ export const publicTask = (task: TaskRecord) => ({
   completed_at: task.completed_at
 });
 
-export const workerTask = (task: TaskRecord | null) => task && ({
+type ClaimedTask = TaskRecord & {
+  input_download_url?: string;
+  output_upload_url?: string;
+  signed_url_expires_at?: string;
+};
+
+export const workerTask = (task: ClaimedTask | null) => task && ({
   task_id: task._id, lease_token: task.lease_token, lease_expires_at: task.lease_expires_at,
   input_object_key: task.input_object_key, output_object_key: task.output_object_key,
   client_match_id: task.client_match_id, attempt: task.attempt, max_attempts: task.max_attempts,
+  input_download_url: task.input_download_url, output_upload_url: task.output_upload_url,
+  signed_url_expires_at: task.signed_url_expires_at,
   input: task.input, status: task.status, progress: task.progress, stage: task.stage
 });
 

@@ -5,6 +5,7 @@ export interface Config {
   uploadUrlSeconds: number;
   pendingUploadSeconds: number;
   resultUrlSeconds: number;
+  workerUrlSeconds: number;
   rawRetentionDays: number;
   resultRetentionDays: number;
   maxUploadBytes: number;
@@ -35,6 +36,7 @@ export const loadConfig = (): Config => ({
   uploadUrlSeconds: Math.min(integer("UPLOAD_URL_SECONDS", 600), 900),
   pendingUploadSeconds: integer("PENDING_UPLOAD_SECONDS", 86400),
   resultUrlSeconds: Math.min(integer("RESULT_URL_SECONDS", 600), 900),
+  workerUrlSeconds: Math.min(integer("WORKER_URL_SECONDS", 4 * 60 * 60), 6 * 60 * 60),
   rawRetentionDays: integer("RAW_RETENTION_DAYS", 7),
   resultRetentionDays: integer("RESULT_RETENTION_DAYS", 30),
   maxUploadBytes: 300 * 1024 * 1024,
