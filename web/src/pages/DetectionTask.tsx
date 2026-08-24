@@ -59,12 +59,15 @@ function ensureCloudWorkflow(matchId: string, file: File | undefined, listener: 
 
     if (!uploadId) {
       if (!file) throw new Error('本地视频文件已在刷新后丢失。云端上传尚未完成，请重新选择视频。')
+      const durationSeconds = latest.videoMeta?.durationSeconds
+      if (!durationSeconds || !Number.isFinite(durationSeconds)) throw new Error('未读取到视频时长，请重新选择视频。')
       report('ticket', 0)
       const ticket = await requestCloudUploadTicket({
         client_match_id: matchId,
         filename: file.name,
         content_type: file.type || (file.name.toLowerCase().endsWith('.mov') ? 'video/quicktime' : 'video/mp4'),
         size_bytes: file.size,
+        duration_seconds: durationSeconds,
       })
       report('uploading', 0)
       await putWholeVideoToCos(file, ticket, (progress) => report('uploading', progress))

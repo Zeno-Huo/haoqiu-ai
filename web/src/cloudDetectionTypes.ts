@@ -5,6 +5,7 @@ export interface CloudUploadTicketRequest {
   filename: string
   content_type: string
   size_bytes: number
+  duration_seconds: number
 }
 
 export interface CloudUploadTicket {
