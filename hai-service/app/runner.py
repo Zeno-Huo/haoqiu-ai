@@ -3,13 +3,14 @@ from __future__ import annotations
 from collections import Counter
 from fractions import Fraction
 from pathlib import Path
+from time import monotonic
 from typing import Callable, Protocol
 
 from .config import Settings
 from .models import Diagnostics, InputInfo, ModelInfo
 
 
-ProgressCallback = Callable[[str, int], None]
+ProgressCallback = Callable[[str, int, int | None], None]
 
 
 class ProcessingError(RuntimeError):
@@ -24,6 +25,29 @@ class ProcessingResult:
         self.input_info = input_info
         self.diagnostics = diagnostics
         self.model = model
+
+
+def validate_video_metadata(
+    *, fps: float, width: int, height: int, total_frames: int, max_duration_seconds: float
+) -> float:
+    """Validate probe values and return duration without importing video/GPU libraries."""
+    if fps <= 0 or width <= 0 or height <= 0 or total_frames <= 0:
+        raise ProcessingError("VIDEO_DECODE_FAILED", "无法读取该视频，请更换文件后重试")
+    duration = total_frames / fps
+    if duration > max_duration_seconds:
+        raise ProcessingError("VIDEO_TOO_LONG", "视频不能超过15分钟")
+    return duration
+
+
+def validate_full_decode(*, processed_frames: int, source_frames: int) -> None:
+    """Reject a partial decode while tolerating at most two container-index frames."""
+    if processed_frames == 0:
+        raise ProcessingError("VIDEO_DECODE_FAILED", "无法读取该视频，请更换文件后重试")
+    if processed_frames < source_frames - 2:
+        raise ProcessingError(
+            "VIDEO_DECODE_INCOMPLETE",
+            "视频未能完整读取，检测已停止，请检查文件后重试",
+        )
 
 
 class Runner(Protocol):
@@ -75,7 +99,7 @@ class YoloVideoRunner:
         except ImportError as exc:
             raise ProcessingError("RUNTIME_MISSING", "视频检测运行依赖不完整") from exc
 
-        progress("probing", 1)
+        progress("probing", 1, None)
         capture = cv2.VideoCapture(str(source))
         if not capture.isOpened():
             raise ProcessingError("VIDEO_DECODE_FAILED", "无法读取该视频，请更换文件后重试")
@@ -84,13 +108,17 @@ class YoloVideoRunner:
         width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
         height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
         total_frames = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
-        if fps <= 0 or width <= 0 or height <= 0 or total_frames <= 0:
+        try:
+            duration = validate_video_metadata(
+                fps=fps,
+                width=width,
+                height=height,
+                total_frames=total_frames,
+                max_duration_seconds=self.settings.max_duration_seconds,
+            )
+        except ProcessingError:
             capture.release()
-            raise ProcessingError("VIDEO_DECODE_FAILED", "无法读取该视频，请更换文件后重试")
-        duration = total_frames / fps
-        if duration > self.settings.max_duration_seconds:
-            capture.release()
-            raise ProcessingError("VIDEO_TOO_LONG", "视频不能超过15分钟")
+            raise
 
         input_info = InputInfo(
             filename=source.name,
@@ -123,6 +151,7 @@ class YoloVideoRunner:
             ) from exc
 
         try:
+            detection_started = monotonic()
             while True:
                 ok, frame = capture.read()
                 if not ok:
@@ -169,11 +198,17 @@ class YoloVideoRunner:
                     container.mux(packet)
                 processed += 1
                 if processed == 1 or processed % max(1, total_frames // 100) == 0:
-                    progress("detecting", min(94, 5 + int(processed / total_frames * 89)))
+                    elapsed = max(monotonic() - detection_started, 0.001)
+                    remaining_frames = max(total_frames - processed, 0)
+                    eta_seconds = int(round(elapsed / processed * remaining_frames))
+                    progress(
+                        "detecting",
+                        min(94, 5 + int(processed / total_frames * 89)),
+                        eta_seconds,
+                    )
 
-            if processed == 0:
-                raise ProcessingError("VIDEO_DECODE_FAILED", "无法读取该视频，请更换文件后重试")
-            progress("rendering", 96)
+            validate_full_decode(processed_frames=processed, source_frames=total_frames)
+            progress("rendering", 96, 0)
             for packet in stream.encode():
                 container.mux(packet)
         except ProcessingError:
@@ -191,6 +226,8 @@ class YoloVideoRunner:
             input_info=input_info,
             diagnostics=Diagnostics(
                 processed_frames=processed,
+                source_frames=total_frames,
+                full_video_processed=True,
                 classes_seen=sorted(classes_seen),
                 frame_detections_by_class=dict(sorted(counts.items())),
             ),

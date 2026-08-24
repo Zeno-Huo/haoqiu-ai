@@ -33,6 +33,7 @@ class JobStore:
                     code="SERVICE_RESTARTED",
                     message="检测服务重启，任务已中断，请重新上传视频",
                 )
+                record.eta_seconds = None
                 record.completed_at = utc_now()
                 self._persist(record)
             self._jobs[record.job_id] = record

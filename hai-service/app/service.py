@@ -11,6 +11,7 @@ from .store import JobStore
 WARNINGS = [
     "检测结果可能包含漏检和类别误判",
     "逐帧检测次数不代表唯一球员人数",
+    "检测视频逐帧处理完整源视频，暂不保留原视频音轨",
 ]
 
 
@@ -55,6 +56,7 @@ class DetectionService:
                             error=ErrorDetail(
                                 code="INTERNAL_ERROR", message="检测服务发生未知错误"
                             ),
+                            eta_seconds=None,
                             completed_at=utc_now(),
                         )
                     except Exception:
@@ -74,10 +76,12 @@ class DetectionService:
             started_at=utc_now(),
         )
 
-        def report(stage: str, progress: int) -> None:
+        def report(stage: str, progress: int, eta_seconds: int | None) -> None:
             # JobStore is protected by a thread lock, so the inference thread can
             # persist progress directly without racing the final success update.
-            self.store.update(job_id, stage=stage, progress=progress)
+            self.store.update(
+                job_id, stage=stage, progress=progress, eta_seconds=eta_seconds
+            )
 
         try:
             result = await asyncio.to_thread(
@@ -87,19 +91,23 @@ class DetectionService:
                 report,
             )
         except ProcessingError as exc:
+            Path(record.output_path).unlink(missing_ok=True)
             self.store.update(
                 job_id,
                 status="failed",
                 stage="failed",
                 error=ErrorDetail(code=exc.code, message=exc.message),
+                eta_seconds=None,
                 completed_at=utc_now(),
             )
         except Exception:
+            Path(record.output_path).unlink(missing_ok=True)
             self.store.update(
                 job_id,
                 status="failed",
                 stage="failed",
                 error=ErrorDetail(code="INTERNAL_ERROR", message="检测服务发生未知错误"),
+                eta_seconds=None,
                 completed_at=utc_now(),
             )
         else:
@@ -108,6 +116,7 @@ class DetectionService:
                 status="succeeded",
                 stage="completed",
                 progress=100,
+                eta_seconds=0,
                 model=result.model,
                 input=result.input_info,
                 diagnostics=result.diagnostics,

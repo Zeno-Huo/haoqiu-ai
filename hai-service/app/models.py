@@ -34,6 +34,8 @@ class InputInfo(BaseModel):
 
 class Diagnostics(BaseModel):
     processed_frames: int
+    source_frames: int
+    full_video_processed: bool
     classes_seen: list[str]
     frame_detections_by_class: dict[str, int]
 
@@ -47,6 +49,7 @@ class JobRecord(BaseModel):
     client_match_id: str | None = None
     status: JobStatus = "queued"
     progress: int = Field(default=0, ge=0, le=100)
+    eta_seconds: int | None = Field(default=None, ge=0)
     stage: JobStage = "queued"
     created_at: str = Field(default_factory=utc_now)
     started_at: str | None = None
@@ -63,4 +66,3 @@ class JobRecord(BaseModel):
 
 
 PUBLIC_JOB_EXCLUDES = {"source_path", "output_path"}
-
