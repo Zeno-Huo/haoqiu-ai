@@ -1,4 +1,5 @@
 import type { CloudDetectionJob, CloudUploadTicket, CloudUploadTicketRequest, SignedDetectionVideo } from '../cloudDetectionTypes'
+import { getCloudBaseAccessToken } from './cloudBaseAuth'
 
 const cloudBase = (import.meta.env.VITE_CLOUDBASE_API_BASE as string | undefined)?.trim().replace(/\/+$/, '') ?? ''
 
@@ -38,13 +39,15 @@ async function parseError(response: Response): Promise<CloudDetectionApiError> {
 async function cloudRequest<T>(path: string, init?: RequestInit, expectedStatus?: number): Promise<T> {
   let response: Response
   try {
+    const accessToken = await getCloudBaseAccessToken()
     response = await fetch(endpoint(path), {
       ...init,
       credentials: 'include',
-      headers: { 'Content-Type': 'application/json', ...init?.headers },
+      headers: { 'Content-Type': 'application/json', ...init?.headers, Authorization: `Bearer ${accessToken}` },
     })
-  } catch {
-    throw new CloudDetectionApiError('无法连接 CloudBase 服务，请检查网络后重试')
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : ''
+    throw new CloudDetectionApiError(detail || '无法连接 CloudBase 服务，请检查网络后重试')
   }
   if (!response.ok) throw await parseError(response)
   if (expectedStatus && response.status !== expectedStatus) {
