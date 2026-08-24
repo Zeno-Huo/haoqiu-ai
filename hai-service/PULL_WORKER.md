@@ -1,6 +1,12 @@
 # HAI Pull Worker 接入约定
 
-该 worker 让 HAI 主动从 CloudBase 任务 API 认领工作，并通过 COS 下载/上传视频。现阶段只提供抽象适配接口和本地 fake 测试，**不包含腾讯云密钥、真实 CloudBase/COS SDK 或云资源操作**。
+该 worker 让 HAI 主动从 CloudBase 任务 API 认领工作，并通过 COS 下载/上传视频。代码包含HTTPS任务API和COS SDK适配器，但**不包含腾讯云密钥或云资源操作**。
+
+已确认资源：
+
+- CloudBase env：`haoqiu-ai-prod-d3g2cm2xn3255c273`
+- 私有 COS bucket：`haoqiu-ai-media-1352817304`
+- COS region：`ap-shanghai`
 
 ## 流程
 
@@ -43,6 +49,33 @@
 - 输出覆盖任务指定的确定性 object key；
 - 上传返回 `object_key/etag/size_bytes`；
 - 密钥来自 HAI 运行环境的临时角色或环境注入，不写入代码、日志或任务文档。
+
+## HAI 环境变量
+
+以下变量只在 HAI 运行环境注入，不提交 `.env`：
+
+```bash
+export HAOQIU_CLOUDBASE_ENV_ID=haoqiu-ai-prod-d3g2cm2xn3255c273
+export HAOQIU_TASK_API_BASE=https://由后端提供的私有任务API域名
+export HAOQIU_TASK_API_TOKEN=短期或受限worker凭据
+export HAOQIU_COS_BUCKET=haoqiu-ai-media-1352817304
+export HAOQIU_COS_REGION=ap-shanghai
+export HAOQIU_COS_SECRET_ID=STS临时SecretId
+export HAOQIU_COS_SECRET_KEY=STS临时SecretKey
+export HAOQIU_COS_SESSION_TOKEN=STS临时SessionToken
+```
+
+配置校验会拒绝HTTP任务地址、错误的env/bucket/region、缺少SessionToken的长期凭据，以及非本机检测API地址。COS SDK固定使用HTTPS，并限制worker只从`inputs/`下载、只向`outputs/`上传。生产环境还应在STS策略中对同样的bucket和前缀实施服务端最小权限。
+
+真实适配器入口：
+
+```bash
+cd /root/haoqiu-service
+source /root/haoqiu-env/bin/activate
+python -m pull_worker.cloud_main
+```
+
+HAI只主动建立到任务API和COS的出站HTTPS连接；本地GPU检测仍访问`127.0.0.1:8000`，无需开放公网入站端口。
 
 ## 本地检测 API
 
