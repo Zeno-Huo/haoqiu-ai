@@ -12,6 +12,7 @@
 
 - 对象 key 只由服务端生成：`inputs/{user}/{task}/...`、`outputs/{user}/{task}/...`。
 - 上传/下载 URL 最长 15 分钟，COS 桶继续保持私有；数据库不保存签名 URL。
+- HTTP CORS 只回显 `ALLOWED_WEB_ORIGINS` 中逗号分隔的精确 origin（默认当前 tcloudbaseapp 测试域名），支持凭据且绝不使用 `*`。预检仅允许 `GET,POST,OPTIONS` 和 `Authorization,Content-Type`。
 - 生产环境只接受 HTTP 访问服务验证后写入 `context.extendedContext.userId` 的身份，并兼容旧触发器的 `context.auth/event.userInfo`；客户端 `x-cloudbase-context`、`x-user-id` 等头绝不作为身份。测试身份头 `x-test-user-id` 只有在非 production 且 `ALLOW_TEST_IDENTITY=true` 时有效。
 - worker 端点统一验证 `Authorization: Bearer ...`，token 从运行环境注入。生产建议在 API 网关再加机器身份/mTLS 或短期 OIDC；当前 token 仅是 MVP 服务身份抽象。
 - COS 凭据只从函数运行环境读取，优先采用标准的 `TENCENTCLOUD_SECRETID/SECRETKEY/SESSIONTOKEN`，并兼容旧变量名。不要把永久密钥写入 `.env`、模板、日志或前端；生产优先使用运行角色/临时会话凭据，或由密钥管理服务注入。

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { main } from "../index";
 import { requireUser, requireWorker } from "../src/auth";
 import { loadConfig, loadTencentCredentials } from "../src/config";
 import type { Config } from "../src/config";
@@ -7,6 +8,7 @@ import type { ObjectMetadata, ObjectStore } from "../src/cos";
 import type { TaskRepository } from "../src/repository";
 import { TaskService } from "../src/service";
 import { haiCompletionBody, publicTask, workerTask } from "../src/http-contract";
+import { corsHeaders, DEFAULT_WEB_ORIGIN, parseAllowedWebOrigins, requireAllowedOrigin, requireAllowedPreflight } from "../src/http-cors";
 import { ApiError } from "../src/types";
 import type { TaskRecord, UploadRecord } from "../src/types";
 
@@ -59,8 +61,48 @@ const config: Config = {
   envId: "test", bucket: "haoqiu-ai-media-1352817304", region: "ap-shanghai",
   uploadUrlSeconds: 600, pendingUploadSeconds: 86400, resultUrlSeconds: 600, workerUrlSeconds: 14400, rawRetentionDays: 7, resultRetentionDays: 30,
   maxUploadBytes: 300 * 1024 * 1024, maxDurationSeconds: 900, maxLeaseSeconds: 120,
-  workerToken: "worker-secret", allowTestIdentity: true
+  workerToken: "worker-secret", allowTestIdentity: true, allowedWebOrigins: [DEFAULT_WEB_ORIGIN]
 };
+
+test("CORS only reflects exact configured origins and never wildcard", () => {
+  assert.deepEqual(parseAllowedWebOrigins(), [DEFAULT_WEB_ORIGIN]);
+  assert.deepEqual(parseAllowedWebOrigins("https://a.example,https://b.example,https://a.example"), ["https://a.example", "https://b.example"]);
+  assert.throws(() => parseAllowedWebOrigins("*"), /wildcard/);
+  assert.throws(() => parseAllowedWebOrigins("https://a.example/path"), /exact HTTP/);
+  assert.doesNotThrow(() => requireAllowedOrigin("https://a.example", ["https://a.example"]));
+  assert.throws(() => requireAllowedOrigin("https://evil.example", ["https://a.example"]), /来源不允许/);
+  assert.doesNotThrow(() => requireAllowedPreflight("POST", "Content-Type, Authorization"));
+  assert.throws(() => requireAllowedPreflight("DELETE", "Content-Type"), /方法不允许/);
+  assert.throws(() => requireAllowedPreflight("POST", "X-User-Id"), /请求头不允许/);
+  assert.deepEqual(corsHeaders(undefined, ["https://a.example"]), { vary: "Origin" });
+  assert.deepEqual(corsHeaders("https://evil.example", ["https://a.example"]), { vary: "Origin" });
+  const allowed = corsHeaders("https://a.example", ["https://a.example"]);
+  assert.equal(allowed["access-control-allow-origin"], "https://a.example");
+  assert.equal(allowed["access-control-allow-credentials"], "true");
+  assert.equal(allowed["access-control-allow-methods"], "GET,POST,OPTIONS");
+  assert.equal(allowed["access-control-allow-headers"], "Authorization,Content-Type");
+  assert.ok(!Object.values(allowed).includes("*"));
+});
+
+test("HTTP handler answers allowed preflight with 204 and rejects other origins", async () => {
+  const preflight = await main({
+    httpMethod: "OPTIONS", path: "/api/v1/cos-upload-tickets", headers: { origin: DEFAULT_WEB_ORIGIN }
+  }, {});
+  assert.equal(preflight.statusCode, 204);
+  assert.equal(preflight.body, "");
+  const preflightHeaders: Record<string, string> = preflight.headers;
+  assert.equal(preflightHeaders.vary, "Origin");
+  assert.equal(preflightHeaders["access-control-allow-origin"], DEFAULT_WEB_ORIGIN);
+  assert.equal(preflightHeaders["access-control-allow-credentials"], "true");
+
+  const denied = await main({
+    httpMethod: "OPTIONS", path: "/api/v1/cos-upload-tickets", headers: { origin: "https://evil.example" }
+  }, {});
+  assert.equal(denied.statusCode, 403);
+  const deniedHeaders: Record<string, string> = denied.headers;
+  assert.equal(deniedHeaders.vary, "Origin");
+  assert.equal(deniedHeaders["access-control-allow-origin"], undefined);
+});
 
 test("production identity abstraction rejects anonymous users and worker rejects bad bearer", () => {
   assert.equal(requireUser(

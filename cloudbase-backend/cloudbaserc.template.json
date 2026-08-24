@@ -15,6 +15,7 @@
         "COS_REGION": "ap-shanghai",
         "PENDING_UPLOAD_SECONDS": "86400",
         "WORKER_URL_SECONDS": "14400",
+        "ALLOWED_WEB_ORIGINS": "https://haoqiu-ai-prod-d3g2cm2xn3255c273-1352817304.tcloudbaseapp.com",
         "ALLOW_TEST_IDENTITY": "false"
       }
     }

@@ -1,3 +1,5 @@
+import { parseAllowedWebOrigins } from "./http-cors";
+
 export interface Config {
   envId: string;
   bucket: string;
@@ -13,6 +15,7 @@ export interface Config {
   maxLeaseSeconds: number;
   workerToken?: string;
   allowTestIdentity: boolean;
+  allowedWebOrigins: string[];
 }
 
 export const loadTencentCredentials = (env: NodeJS.ProcessEnv = process.env) => ({
@@ -43,5 +46,6 @@ export const loadConfig = (): Config => ({
   maxDurationSeconds: 15 * 60,
   maxLeaseSeconds: Math.min(integer("MAX_LEASE_SECONDS", 120), 300),
   workerToken: process.env.WORKER_API_TOKEN,
-  allowTestIdentity: process.env.ALLOW_TEST_IDENTITY === "true" && process.env.NODE_ENV !== "production"
+  allowTestIdentity: process.env.ALLOW_TEST_IDENTITY === "true" && process.env.NODE_ENV !== "production",
+  allowedWebOrigins: parseAllowedWebOrigins(process.env.ALLOWED_WEB_ORIGINS)
 });
