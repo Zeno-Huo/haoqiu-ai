@@ -1,5 +1,6 @@
 import COS from "cos-nodejs-sdk-v5";
 import { ApiError } from "./types";
+import { loadTencentCredentials } from "./config";
 
 export interface ObjectMetadata { sizeBytes: number; etag: string }
 export interface ObjectStore {
@@ -11,9 +12,7 @@ export interface ObjectStore {
 export class TencentCosStore implements ObjectStore {
   private client: COS;
   constructor(private bucket: string, private region: string) {
-    const SecretId = process.env.TENCENT_SECRET_ID;
-    const SecretKey = process.env.TENCENT_SECRET_KEY;
-    const SecurityToken = process.env.TENCENT_SESSION_TOKEN;
+    const { SecretId, SecretKey, SecurityToken } = loadTencentCredentials();
     if (!SecretId || !SecretKey) throw new Error("COS runtime credentials are not configured");
     this.client = new COS({ SecretId, SecretKey, SecurityToken });
   }

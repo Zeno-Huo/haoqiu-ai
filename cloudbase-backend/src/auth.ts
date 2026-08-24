@@ -7,8 +7,9 @@ export const normalizeHeaders = (headers: Record<string, unknown> = {}): Record<
   Object.fromEntries(Object.entries(headers).map(([key, value]) => [key.toLowerCase(), first(value) || ""]));
 
 export const requireUser = (event: any, context: any, allowTestIdentity: boolean): string => {
-  // Depending on the CloudBase trigger, verified identity is exposed on context.auth or event.userInfo.
-  const verified = context?.auth?.uid || context?.auth?.openId || event?.userInfo?.uid || event?.userInfo?.openId;
+  // HTTP access service places its gateway-verified identity here. Older CloudBase
+  // triggers use context.auth/event.userInfo; request headers are never identity sources.
+  const verified = context?.extendedContext?.userId || context?.auth?.uid || context?.auth?.openId || event?.userInfo?.uid || event?.userInfo?.openId;
   if (verified) return String(verified);
   const testUser = normalizeHeaders(event?.headers)["x-test-user-id"];
   if (allowTestIdentity && testUser && /^[a-zA-Z0-9:_-]{1,128}$/.test(testUser)) return testUser;

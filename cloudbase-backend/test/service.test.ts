@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { requireUser, requireWorker } from "../src/auth";
+import { loadTencentCredentials } from "../src/config";
 import type { Config } from "../src/config";
 import type { ObjectMetadata, ObjectStore } from "../src/cos";
 import type { TaskRepository } from "../src/repository";
@@ -60,11 +61,26 @@ const config: Config = {
 };
 
 test("production identity abstraction rejects anonymous users and worker rejects bad bearer", () => {
-  assert.throws(() => requireUser({ headers: { "x-test-user-id": "demo" } }, {}, false), /需要登录/);
+  assert.equal(requireUser(
+    { userInfo: { uid: "legacy-event-user" }, headers: { "x-cloudbase-context": "forged", "x-user-id": "forged" } },
+    { extendedContext: { userId: "gateway-user" }, auth: { uid: "legacy-context-user" } },
+    false
+  ), "gateway-user");
+  assert.throws(() => requireUser({ headers: { "x-cloudbase-context": "forged", "x-user-id": "forged", "x-test-user-id": "demo" } }, {}, false), /需要登录/);
   assert.equal(requireUser({ headers: { "X-Test-User-Id": "demo" } }, {}, true), "demo");
   assert.throws(() => requireWorker({ headers: { authorization: "Bearer wrong" } }, "worker-secret", "test"), /invalid worker/);
   assert.throws(() => requireWorker({ headers: { authorization: "Bearer worker-secret", "x-cloudbase-env": "wrong" } }, "worker-secret", "test"), /environment/);
   assert.doesNotThrow(() => requireWorker({ headers: { authorization: "Bearer worker-secret", "x-cloudbase-env": "test" } }, "worker-secret", "test"));
+});
+
+test("COS credentials prefer standard Tencent Cloud names and support legacy fallback", () => {
+  assert.deepEqual(loadTencentCredentials({
+    TENCENTCLOUD_SECRETID: "standard-id", TENCENTCLOUD_SECRETKEY: "standard-key", TENCENTCLOUD_SESSIONTOKEN: "standard-token",
+    TENCENT_SECRET_ID: "legacy-id", TENCENT_SECRET_KEY: "legacy-key", TENCENT_SESSION_TOKEN: "legacy-token"
+  }), { SecretId: "standard-id", SecretKey: "standard-key", SecurityToken: "standard-token" });
+  assert.deepEqual(loadTencentCredentials({
+    TENCENT_SECRET_ID: "legacy-id", TENCENT_SECRET_KEY: "legacy-key", TENCENT_SESSION_TOKEN: "legacy-token"
+  }), { SecretId: "legacy-id", SecretKey: "legacy-key", SecurityToken: "legacy-token" });
 });
 
 test("HAI completion contract maps idempotency header and nested result", () => {

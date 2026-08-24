@@ -14,6 +14,12 @@ export interface Config {
   allowTestIdentity: boolean;
 }
 
+export const loadTencentCredentials = (env: NodeJS.ProcessEnv = process.env) => ({
+  SecretId: env.TENCENTCLOUD_SECRETID || env.TENCENT_SECRET_ID,
+  SecretKey: env.TENCENTCLOUD_SECRETKEY || env.TENCENT_SECRET_KEY,
+  SecurityToken: env.TENCENTCLOUD_SESSIONTOKEN || env.TENCENT_SESSION_TOKEN
+});
+
 const integer = (name: string, fallback: number): number => {
   const value = process.env[name];
   if (!value) return fallback;
