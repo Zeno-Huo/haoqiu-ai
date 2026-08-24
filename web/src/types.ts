@@ -1,4 +1,5 @@
 // 好球Ai · MVP 阶段一 数据类型定义
+import type { DetectionJob } from './detectionTypes'
 
 export type MatchType = '5v5' | '7v7' | '11v11'
 
@@ -52,7 +53,8 @@ export interface Match {
   shotsAway?: number
   teamId?: string
   videoName?: string
-  /** 仅在浏览器本地读取的文件信息；文件本身不会被上传或保存。 */
+  videoSource?: 'local-file' | 'demo'
+  /** 浏览器本地读取的文件信息；文件本身不写入持久存储。 */
   videoMeta?: {
     sizeBytes: number
     durationSeconds?: number
@@ -62,6 +64,9 @@ export interface Match {
   identificationStatus?: IdentificationStatus
   /** 画面候选球员 ID -> 球队成员 ID。只有出现在此表中的身份才视为已由队长确认。 */
   playerIdentityMap?: Record<string, string>
+  /** 真实检测任务可刷新恢复；与本地球队复盘 Demo 分开。 */
+  detectionJobId?: string
+  detectionJob?: DetectionJob
   players: Player[]
   analysis?: PlayerAnalysis[]
   createdAt: number

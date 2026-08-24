@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { createRng } from '../lib/seed'
 import { getTeamProfile, newId, saveMatch } from '../lib/storage'
 import { todayStr } from '../lib/utils'
+import { cacheVideoFile } from '../lib/videoFileCache'
 import type { Match, MatchType, Player } from '../types'
 import { MATCH_TYPES, MATCH_TYPE_DESC } from '../types'
 
@@ -15,8 +16,11 @@ function clampScore(raw: string): number {
 export default function MatchNew() {
   const navigate = useNavigate()
   const inputRef = useRef<HTMLInputElement>(null)
+  const probeTokenRef = useRef(0)
   const team = getTeamProfile()
   const [videoName, setVideoName] = useState('')
+  const [selectedFile, setSelectedFile] = useState<File>()
+  const [videoProbeState, setVideoProbeState] = useState<'idle' | 'probing' | 'ready' | 'error'>('idle')
   const [videoMeta, setVideoMeta] = useState<Match['videoMeta']>()
   const [date, setDate] = useState(todayStr())
   const [type, setType] = useState<MatchType>('7v7')
@@ -25,7 +29,7 @@ export default function MatchNew() {
   const [oppScore, setOppScore] = useState(0)
   const [error, setError] = useState('')
 
-  const canStart = Boolean(videoName)
+  const canStart = Boolean(videoName && videoProbeState === 'ready')
 
   function startReview() {
     if (!videoName) {
@@ -63,12 +67,14 @@ export default function MatchNew() {
       possessionAway: 100 - possessionHome,
       shotsAway: Math.max(0, oppScore + rng.int(1, 5)),
       videoName,
+      videoSource: selectedFile ? 'local-file' : 'demo',
       videoMeta,
       identificationStatus: 'pending',
       players,
       createdAt: Date.now(),
     }
     saveMatch(match)
+    if (selectedFile) cacheVideoFile(id, selectedFile)
     navigate(`/match/${id}/quality`, { replace: true })
   }
 
@@ -78,7 +84,7 @@ export default function MatchNew() {
         <header className="mb-7">
           <h1 className="text-3xl font-semibold text-[var(--text-primary)]">上传比赛视频</h1>
           <p className="mt-2 max-w-2xl text-sm leading-6 text-[var(--text-muted)]">
-            选择一段球队视频，进入本地演示复盘流程；浏览器只读取文件信息，不上传视频，真实分析待接入。
+            选择一段球队视频，先检查画面信息；下一步可选择真实检测或独立的球队复盘 Demo。
           </p>
         </header>
 
@@ -87,20 +93,65 @@ export default function MatchNew() {
             ref={inputRef}
             className="sr-only"
             type="file"
-            accept="video/*"
+            accept=".mp4,.mov,video/mp4,video/quicktime"
             onChange={(event) => {
+              const probeToken = ++probeTokenRef.current
               const file = event.target.files?.[0]
+              if (file && !/\.(mp4|mov)$/i.test(file.name)) {
+                event.currentTarget.value = ''
+                setSelectedFile(undefined)
+                setVideoName('')
+                setVideoMeta(undefined)
+                setVideoProbeState('error')
+                setError('真实检测 v0.1 仅支持 MP4 或 MOV 视频')
+                return
+              }
+              if (file && file.size > 300 * 1024 * 1024) {
+                event.currentTarget.value = ''
+                setSelectedFile(undefined)
+                setVideoName('')
+                setVideoMeta(undefined)
+                setVideoProbeState('error')
+                setError('视频超过 300MB，请压缩或截取后重试')
+                return
+              }
+              setSelectedFile(file)
               setVideoName(file?.name ?? '')
               setVideoMeta(file ? { sizeBytes: file.size } : undefined)
+              setVideoProbeState(file ? 'probing' : 'idle')
               if (file) {
                 const url = URL.createObjectURL(file)
                 const probe = document.createElement('video')
                 probe.preload = 'metadata'
                 probe.onloadedmetadata = () => {
-                  setVideoMeta({ sizeBytes: file.size, durationSeconds: probe.duration, width: probe.videoWidth, height: probe.videoHeight })
+                  if (probeToken !== probeTokenRef.current) {
+                    URL.revokeObjectURL(url)
+                    return
+                  }
+                  if (probe.duration > 15 * 60) {
+                    if (inputRef.current) inputRef.current.value = ''
+                    setSelectedFile(undefined)
+                    setVideoName('')
+                    setVideoMeta(undefined)
+                    setVideoProbeState('error')
+                    setError('视频超过 15 分钟，请截取后重试')
+                  } else {
+                    setVideoMeta({ sizeBytes: file.size, durationSeconds: probe.duration, width: probe.videoWidth, height: probe.videoHeight })
+                    setVideoProbeState('ready')
+                  }
                   URL.revokeObjectURL(url)
                 }
-                probe.onerror = () => URL.revokeObjectURL(url)
+                probe.onerror = () => {
+                  if (probeToken === probeTokenRef.current) {
+                    if (inputRef.current) inputRef.current.value = ''
+                    setSelectedFile(undefined)
+                    setVideoName('')
+                    setVideoMeta(undefined)
+                    setVideoProbeState('error')
+                    setError('无法读取该视频的基础信息，请更换 MP4 或 MOV 文件后重试')
+                  }
+                  URL.revokeObjectURL(url)
+                }
                 probe.src = url
               }
               setError('')
@@ -115,13 +166,13 @@ export default function MatchNew() {
               <span className="upload-icon" aria-hidden>{videoName ? '✓' : '↑'}</span>
               <strong className="block text-base text-[var(--text-primary)]">{videoName || '选择手机拍摄的比赛视频'}</strong>
               <span className="mt-2 block text-xs text-[var(--text-muted)]">
-                {videoName ? '已读取本地文件信息 · 下一步检查拍摄质量' : '支持常见视频格式 · 不会上传文件'}
+                {videoProbeState === 'probing' ? '正在读取视频信息…' : videoName ? '已读取本地文件信息 · 尚未上传' : '支持 MP4 / MOV · 上限 300MB、15 分钟'}
               </span>
             </span>
           </button>
 
           <div className="mt-3 text-center">
-            <button className="text-sm text-[var(--ai)] hover:underline" type="button" onClick={() => { setVideoName('好球Ai_演示片段.mp4'); setVideoMeta({ sizeBytes: 0, durationSeconds: 20, width: 1280, height: 720 }); setError('') }}>
+            <button className="text-sm text-[var(--ai)] hover:underline" type="button" onClick={() => { probeTokenRef.current += 1; if (inputRef.current) inputRef.current.value = ''; setSelectedFile(undefined); setVideoName('好球Ai_演示片段.mp4'); setVideoMeta({ sizeBytes: 0, durationSeconds: 20, width: 1280, height: 720 }); setVideoProbeState('ready'); setError('') }}>
               没有视频？使用演示片段
             </button>
           </div>
@@ -129,7 +180,7 @@ export default function MatchNew() {
           {error && <p className="mt-5 text-sm text-[var(--danger)]">{error}</p>}
           <div className="mt-6">
             <button className="btn-primary w-full justify-center" type="button" disabled={!canStart} onClick={startReview}>
-              下一步：检查视频 <span aria-hidden>→</span>
+              {videoProbeState === 'probing' ? '正在读取视频信息…' : '下一步：检查视频'} {videoProbeState !== 'probing' && <span aria-hidden>→</span>}
             </button>
           </div>
 
@@ -161,7 +212,7 @@ export default function MatchNew() {
             </div>
           </details>
 
-          <p className="mt-4 text-center text-xs text-[var(--text-muted)]">本地演示：只在本地记录文件信息；后续看板使用演示数据，真实分析待接入。</p>
+          <p className="mt-4 text-center text-xs text-[var(--text-muted)]">文件只在选择“开始真实检测”后上传；演示复盘不上传视频。</p>
         </section>
       </div>
     </div>

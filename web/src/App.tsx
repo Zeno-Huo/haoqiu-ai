@@ -3,6 +3,7 @@ import Layout from './components/Layout'
 import Home from './pages/Home'
 import MatchNew from './pages/MatchNew'
 import VideoQuality from './pages/VideoQuality'
+import DetectionTask from './pages/DetectionTask'
 import Analyzing from './pages/Analyzing'
 import MatchReport from './pages/MatchReport'
 import IdentifyPlayers from './pages/IdentifyPlayers'
@@ -16,6 +17,7 @@ export default function App() {
         <Route path="/" element={<Home />} />
         <Route path="/match/new" element={<MatchNew />} />
         <Route path="/match/:id/quality" element={<VideoQuality />} />
+        <Route path="/match/:id/detection" element={<DetectionTask />} />
         <Route path="/team" element={<MyTeam />} />
         <Route path="/match/:id/analyzing" element={<Analyzing />} />
         <Route path="/match/:id/identify" element={<IdentifyPlayers />} />
