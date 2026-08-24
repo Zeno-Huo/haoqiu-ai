@@ -2,16 +2,25 @@ from __future__ import annotations
 
 import time
 
-from .cloud_adapters import CosSdkObjectStorage, HttpCloudBaseTaskApi
+from .cloud_adapters import (
+    CosSdkObjectStorage,
+    HttpCloudBaseTaskApi,
+    HttpsSignedUrlObjectStorage,
+)
 from .cloud_config import CloudWorkerConfig
 from .local_api import HttpLocalDetectionApi
 from .worker import PullWorker, WorkerConfig
 
 
 def build_worker(config: CloudWorkerConfig) -> PullWorker:
+    storage = (
+        HttpsSignedUrlObjectStorage(config)
+        if config.storage_mode == "signed_url"
+        else CosSdkObjectStorage(config)
+    )
     return PullWorker(
         task_api=HttpCloudBaseTaskApi(config),
-        storage=CosSdkObjectStorage(config),
+        storage=storage,
         local_api=HttpLocalDetectionApi(config.local_api_base),
         config=WorkerConfig(
             worker_id=config.worker_id,
@@ -34,4 +43,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

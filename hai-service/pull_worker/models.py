@@ -13,6 +13,10 @@ class RemoteTask:
     client_match_id: str | None = None
     attempt: int = 1
     max_attempts: int = 3
+    # Signed URLs are ephemeral capabilities: keep them in memory only and out
+    # of repr/logs/workspace state.
+    input_download_url: str | None = field(default=None, repr=False)
+    output_upload_url: str | None = field(default=None, repr=False)
 
 
 @dataclass(frozen=True)
@@ -60,4 +64,3 @@ class WorkspaceState:
             uploaded_object=StoredObject(**uploaded) if uploaded else None,
             local_result=value.get("local_result"),
         )
-

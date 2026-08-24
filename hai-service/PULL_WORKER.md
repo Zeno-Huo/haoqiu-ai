@@ -12,7 +12,7 @@
 
 1. 使用 `worker_id + lease_seconds` 原子认领最多一个任务；
 2. 后台按租约周期续租，租约失效后不得提交状态；
-3. 从 COS 适配器下载输入到确定性本地工作目录；
+3. 生产优先使用claim响应中的短期COS签名URL，通过HTTPS下载输入到确定性本地工作目录；
 4. 调用 `127.0.0.1:8000` 的现有 FastAPI 创建完整视频检测任务；
 5. 轮询至完成，把受租约保护的进度/阶段/ETA回写任务 API，并下载带框 MP4；
 6. 上传到任务指定的确定性 COS object key；
@@ -28,6 +28,8 @@
 - `complete` 必须对 `idempotency_key` 幂等；重复请求返回同一完成结果；
 - `fail(retryable=true)` 仅在 `attempt < max_attempts` 时重新排队，并建议使用退避时间；
 - 任务文档只保存 COS object key、状态和诊断摘要，不保存临时下载 URL 或密钥。
+- claim响应在使用`signed_url`模式时额外返回`input_download_url`和`output_upload_url`；二者不得写入任务文档、日志或本地`state.json`。
+- 每次claim/重新认领都应即时签发新URL；下载URL至少覆盖下载窗口，上传URL必须覆盖最长完整视频处理窗口。若URL过期，worker按可重试失败退出，下一次认领使用新URL恢复，不复用过期URL。
 
 `RemoteTask` 最小字段：
 
@@ -40,6 +42,15 @@
   "client_match_id": "m_01",
   "attempt": 1,
   "max_attempts": 3
+}
+```
+
+生产claim响应还需在上述`task`对象中临时附加：
+
+```json
+{
+  "input_download_url": "https://私有COS主机/inputs/...?签名参数",
+  "output_upload_url": "https://私有COS主机/outputs/...?签名参数"
 }
 ```
 
@@ -60,12 +71,12 @@ export HAOQIU_TASK_API_BASE=https://由后端提供的私有任务API域名
 export HAOQIU_TASK_API_TOKEN=短期或受限worker凭据
 export HAOQIU_COS_BUCKET=haoqiu-ai-media-1352817304
 export HAOQIU_COS_REGION=ap-shanghai
-export HAOQIU_COS_SECRET_ID=STS临时SecretId
-export HAOQIU_COS_SECRET_KEY=STS临时SecretKey
-export HAOQIU_COS_SESSION_TOKEN=STS临时SessionToken
+export HAOQIU_STORAGE_MODE=signed_url
 ```
 
-配置校验会拒绝HTTP任务地址、错误的env/bucket/region、缺少SessionToken的长期凭据，以及非本机检测API地址。COS SDK固定使用HTTPS，并限制worker只从`inputs/`下载、只向`outputs/`上传。生产环境还应在STS策略中对同样的bucket和前缀实施服务端最小权限。
+`signed_url`是生产默认模式，不需要在HAI注入COS SecretId/SecretKey。worker只在内存中使用claim返回的短期URL，不写日志或`state.json`；它会强制校验HTTPS、精确COS主机、URL路径与object key一致且包含签名参数，拒绝重定向。上传成功必须取得ETag，并仍以object key/ETag/size完成任务回报。
+
+原STS模式保留作为受控回退方案。只有明确设置`HAOQIU_STORAGE_MODE=sts`时，才需要注入`HAOQIU_COS_SECRET_ID/HAOQIU_COS_SECRET_KEY/HAOQIU_COS_SESSION_TOKEN`三项临时凭据。配置校验会拒绝缺少SessionToken的STS配置。两种模式都限制输入/输出object key前缀。
 
 真实适配器入口：
 

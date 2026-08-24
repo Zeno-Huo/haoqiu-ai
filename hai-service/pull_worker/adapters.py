@@ -43,9 +43,18 @@ class TaskApi(Protocol):
 class ObjectStorage(Protocol):
     """COS adapter. Implementations must overwrite the deterministic output key safely."""
 
-    def download(self, object_key: str, destination: Path) -> None: ...
+    def download(
+        self, object_key: str, destination: Path, *, signed_url: str | None = None
+    ) -> None: ...
 
-    def upload(self, source: Path, object_key: str, content_type: str) -> StoredObject: ...
+    def upload(
+        self,
+        source: Path,
+        object_key: str,
+        content_type: str,
+        *,
+        signed_url: str | None = None,
+    ) -> StoredObject: ...
 
 
 class LocalDetectionApi(Protocol):

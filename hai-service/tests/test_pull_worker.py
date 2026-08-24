@@ -55,13 +55,26 @@ class FakeStorage:
         self.objects = objects
         self.downloads = 0
         self.uploads = 0
+        self.download_urls: list[str | None] = []
+        self.upload_urls: list[str | None] = []
 
-    def download(self, object_key: str, destination: Path) -> None:
+    def download(
+        self, object_key: str, destination: Path, *, signed_url: str | None = None
+    ) -> None:
         self.downloads += 1
+        self.download_urls.append(signed_url)
         destination.write_bytes(self.objects[object_key])
 
-    def upload(self, source: Path, object_key: str, content_type: str) -> StoredObject:
+    def upload(
+        self,
+        source: Path,
+        object_key: str,
+        content_type: str,
+        *,
+        signed_url: str | None = None,
+    ) -> StoredObject:
         self.uploads += 1
+        self.upload_urls.append(signed_url)
         data = source.read_bytes()
         self.objects[object_key] = data
         return StoredObject(
@@ -116,6 +129,8 @@ def make_task(attempt: int = 1) -> RemoteTask:
         client_match_id="m_01",
         attempt=attempt,
         max_attempts=3,
+        input_download_url="https://cos.example/inputs/match.mp4?signature=input",
+        output_upload_url="https://cos.example/outputs/remote_01/annotated.mp4?signature=output",
     )
 
 
@@ -145,6 +160,8 @@ def test_pull_worker_success_and_cleanup(tmp_path):
     assert len(task_api.completed) == 1
     assert task_api.completed[0]["idempotency_key"] == "remote_01:annotated-video:v1"
     assert storage.objects["outputs/remote_01/annotated.mp4"] == b"annotated-video"
+    assert storage.download_urls == [make_task().input_download_url]
+    assert storage.upload_urls == [make_task().output_upload_url]
     assert task_api.renewals > 0
     assert [update["progress"] for update in task_api.progress_updates] == [50, 100]
     assert list((tmp_path / "work").glob("task_*")) == []
@@ -174,6 +191,11 @@ def test_retry_resumes_after_upload_without_reprocessing(tmp_path):
     assert len(task_api.failures) == 1
     assert local_api.creates == 1
     assert storage.uploads == 1
+    state_files = list((tmp_path / "work").glob("task_*/state.json"))
+    assert len(state_files) == 1
+    persisted = state_files[0].read_text("utf-8")
+    assert "signature=input" not in persisted
+    assert "signature=output" not in persisted
 
     assert worker.run_once() is True
     assert len(task_api.completed) == 1

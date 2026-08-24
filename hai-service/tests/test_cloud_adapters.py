@@ -5,7 +5,11 @@ from pathlib import Path
 import httpx
 import pytest
 
-from pull_worker.cloud_adapters import CosSdkObjectStorage, HttpCloudBaseTaskApi
+from pull_worker.cloud_adapters import (
+    CosSdkObjectStorage,
+    HttpCloudBaseTaskApi,
+    HttpsSignedUrlObjectStorage,
+)
 from pull_worker.cloud_config import CloudConfigError, CloudWorkerConfig
 
 
@@ -30,8 +34,9 @@ def test_config_requires_https_and_sts_session_token():
         CloudWorkerConfig.from_env(env)
 
     env = valid_env()
+    env["HAOQIU_STORAGE_MODE"] = "sts"
     env["HAOQIU_COS_SESSION_TOKEN"] = ""
-    with pytest.raises(CloudConfigError, match="临时凭据"):
+    with pytest.raises(CloudConfigError, match="STS模式"):
         CloudWorkerConfig.from_env(env)
 
     config = CloudWorkerConfig.from_env(valid_env())
@@ -57,6 +62,8 @@ def test_task_api_claim_progress_and_complete_use_safe_headers():
                         "output_object_key": "outputs/user/task_01/annotated.mp4",
                         "attempt": 1,
                         "max_attempts": 3,
+                        "input_download_url": "https://haoqiu-ai-media-1352817304.cos.ap-shanghai.myqcloud.com/inputs/user/task_01/source.mp4?q-signature=in",
+                        "output_upload_url": "https://haoqiu-ai-media-1352817304.cos.ap-shanghai.myqcloud.com/outputs/user/task_01/annotated.mp4?q-signature=out",
                     }
                 },
             )
@@ -75,6 +82,7 @@ def test_task_api_claim_progress_and_complete_use_safe_headers():
 
     task = api.claim("hai-test", 120)
     assert task is not None and task.task_id == "task_01"
+    assert "q-signature" not in repr(task)
     assert api.report_progress("task_01", "lease_01", "detecting", 42, 18)
     assert api.complete(
         "task_01", "lease_01", {"artifact": {}}, "task_01:annotated-video:v1"
@@ -125,3 +133,47 @@ def test_cos_adapter_limits_prefixes_and_uses_private_bucket(tmp_path):
         storage.download("outputs/user/task_01/annotated.mp4", downloaded)
     with pytest.raises(ValueError, match="允许前缀"):
         storage.upload(output, "inputs/user/task_01/result.mp4", "video/mp4")
+
+
+def test_signed_url_storage_downloads_and_puts_without_leaking_url(tmp_path):
+    bodies: dict[str, bytes] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(200, content=b"source-video")
+        bodies[request.url.path] = request.read()
+        return httpx.Response(200, headers={"ETag": '"signed-etag"'})
+
+    config = CloudWorkerConfig.from_env(valid_env())
+    storage = HttpsSignedUrlObjectStorage(
+        config, client=httpx.Client(transport=httpx.MockTransport(handler))
+    )
+    host = config.expected_cos_host
+    input_key = "inputs/user/task_01/source.mp4"
+    output_key = "outputs/user/task_01/annotated.mp4"
+    input_url = f"https://{host}/{input_key}?q-signature=secret-input"
+    output_url = f"https://{host}/{output_key}?q-signature=secret-output"
+
+    downloaded = tmp_path / "input.mp4"
+    storage.download(input_key, downloaded, signed_url=input_url)
+    assert downloaded.read_bytes() == b"source-video"
+
+    output = tmp_path / "annotated.mp4"
+    output.write_bytes(b"annotated-video")
+    stored = storage.upload(
+        output, output_key, "video/mp4", signed_url=output_url
+    )
+    assert stored.object_key == output_key
+    assert stored.etag == "signed-etag"
+    assert stored.size_bytes == len(b"annotated-video")
+    assert bodies[f"/{output_key}"] == b"annotated-video"
+
+    unsafe_urls = [
+        f"http://{host}/{input_key}?q-signature=x",
+        f"https://evil.example/{input_key}?q-signature=x",
+        f"https://{host}/inputs/user/other/source.mp4?q-signature=x",
+    ]
+    for unsafe in unsafe_urls:
+        with pytest.raises(ValueError) as caught:
+            storage.download(input_key, downloaded, signed_url=unsafe)
+        assert "q-signature" not in str(caught.value)

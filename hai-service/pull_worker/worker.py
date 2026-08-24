@@ -136,7 +136,14 @@ class PullWorker:
             return
 
         if state.stage == "claimed" or not input_path.is_file():
-            self._retry(lambda: self.storage.download(task.input_object_key, input_path), lease)
+            self._retry(
+                lambda: self.storage.download(
+                    task.input_object_key,
+                    input_path,
+                    signed_url=task.input_download_url,
+                ),
+                lease,
+            )
             lease.ensure_owned()
             state.stage = "downloaded"
             self._save_state(task_dir, state)
@@ -168,7 +175,10 @@ class PullWorker:
 
         uploaded = self._retry(
             lambda: self.storage.upload(
-                artifact_path, task.output_object_key, "video/mp4"
+                artifact_path,
+                task.output_object_key,
+                "video/mp4",
+                signed_url=task.output_upload_url,
             ),
             lease,
         )

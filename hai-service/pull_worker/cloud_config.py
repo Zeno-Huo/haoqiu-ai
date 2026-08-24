@@ -27,6 +27,7 @@ class CloudWorkerConfig:
     cos_secret_id: str = field(default="", repr=False)
     cos_secret_key: str = field(default="", repr=False)
     cos_session_token: str = field(default="", repr=False)
+    storage_mode: str = "signed_url"
     cos_input_prefix: str = "inputs/"
     cos_output_prefix: str = "outputs/"
     local_api_base: str = "http://127.0.0.1:8000"
@@ -49,6 +50,7 @@ class CloudWorkerConfig:
             cos_secret_id=env.get("HAOQIU_COS_SECRET_ID", "").strip(),
             cos_secret_key=env.get("HAOQIU_COS_SECRET_KEY", "").strip(),
             cos_session_token=env.get("HAOQIU_COS_SESSION_TOKEN", "").strip(),
+            storage_mode=env.get("HAOQIU_STORAGE_MODE", "signed_url").strip().lower(),
             cos_input_prefix=env.get("HAOQIU_COS_INPUT_PREFIX", "inputs/").strip(),
             cos_output_prefix=env.get("HAOQIU_COS_OUTPUT_PREFIX", "outputs/").strip(),
             local_api_base=env.get(
@@ -89,8 +91,12 @@ class CloudWorkerConfig:
         local = urlparse(self.local_api_base)
         if local.scheme != "http" or local.hostname not in {"127.0.0.1", "localhost"}:
             raise CloudConfigError("本机检测API只能使用127.0.0.1或localhost")
-        if not all((self.cos_secret_id, self.cos_secret_key, self.cos_session_token)):
-            raise CloudConfigError("COS必须注入SecretId/SecretKey/SessionToken三项临时凭据")
+        if self.storage_mode not in {"signed_url", "sts"}:
+            raise CloudConfigError("HAOQIU_STORAGE_MODE只能为signed_url或sts")
+        if self.storage_mode == "sts" and not all(
+            (self.cos_secret_id, self.cos_secret_key, self.cos_session_token)
+        ):
+            raise CloudConfigError("STS模式必须注入SecretId/SecretKey/SessionToken三项临时凭据")
         if not self.cos_input_prefix.endswith("/") or not self.cos_output_prefix.endswith("/"):
             raise CloudConfigError("COS输入与输出前缀必须以/结尾")
         if not self.worker_id:
@@ -101,3 +107,7 @@ class CloudWorkerConfig:
             raise CloudConfigError("续租间隔必须大于0且小于租约时长")
         if self.poll_interval_seconds <= 0 or self.idle_interval_seconds <= 0:
             raise CloudConfigError("轮询间隔必须大于0")
+
+    @property
+    def expected_cos_host(self) -> str:
+        return f"{self.cos_bucket}.cos.{self.cos_region}.myqcloud.com"
