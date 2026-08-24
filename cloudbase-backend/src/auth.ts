@@ -15,13 +15,17 @@ export const requireUser = (event: any, context: any, allowTestIdentity: boolean
   throw new ApiError(401, "AUTH_REQUIRED", "需要登录后操作");
 };
 
-export const requireWorker = (event: any, configuredToken?: string): void => {
+export const requireWorker = (event: any, configuredToken?: string, expectedEnv?: string): void => {
   if (!configuredToken) throw new ApiError(503, "WORKER_AUTH_NOT_CONFIGURED", "worker identity is not configured");
-  const authorization = normalizeHeaders(event?.headers).authorization || "";
+  const headers = normalizeHeaders(event?.headers);
+  const authorization = headers.authorization || "";
   const supplied = authorization.startsWith("Bearer ") ? authorization.slice(7) : "";
   const left = Buffer.from(supplied);
   const right = Buffer.from(configuredToken);
   if (left.length !== right.length || !crypto.timingSafeEqual(left, right)) {
     throw new ApiError(401, "WORKER_AUTH_INVALID", "invalid worker identity");
+  }
+  if (expectedEnv && headers["x-cloudbase-env"] !== expectedEnv) {
+    throw new ApiError(403, "WORKER_ENV_INVALID", "worker CloudBase environment is invalid");
   }
 };

@@ -13,6 +13,7 @@
         "CLOUDBASE_ENV_ID": "haoqiu-ai-prod-d3g2cm2xn3255c273",
         "COS_BUCKET": "haoqiu-ai-media-1352817304",
         "COS_REGION": "ap-shanghai",
+        "PENDING_UPLOAD_SECONDS": "86400",
         "ALLOW_TEST_IDENTITY": "false"
       }
     }

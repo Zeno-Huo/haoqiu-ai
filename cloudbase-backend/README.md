@@ -20,19 +20,23 @@
 
 前端：
 
-1. `POST /api/v1/uploads/ticket`，JSON：`filename`、`content_type`、`size_bytes`、`duration_seconds`、可选 `client_match_id`。严格限制 300MB、15 分钟、MP4/MOV。
+1. `POST /api/v1/cos-upload-tickets`，JSON：`filename`、`content_type`、`size_bytes`、`duration_seconds`、`client_match_id`。严格限制 300MB、15 分钟、MP4/MOV。
 2. 客户端按响应中的 `PUT` URL 直接上传到私有 COS。
-3. `POST /api/v1/uploads/{upload_id}/confirm`。后端 HEAD 校验对象及精确大小，并幂等创建 queued 任务。
-4. `GET /api/v1/detection-jobs/{task_id}` 查询自己的任务。
-5. `GET /api/v1/detection-jobs/{task_id}/artifacts/annotated-video` 在成功后签发短期 GET URL。
+3. `POST /api/v1/cloud-detection-jobs`，JSON：`upload_id`、`client_match_id`。后端校验二者绑定关系，使用服务端保存的 object key 做 HEAD 和精确大小校验，再幂等创建 queued 任务。
+4. `GET /api/v1/cloud-detection-jobs/{task_id}` 查询自己的任务。
+5. `POST /api/v1/cloud-detection-jobs/{task_id}/artifacts/annotated-video-url` 在成功后签发短期 GET URL。
+
+PUT URL 最长 15 分钟，但 pending 上传记录默认保留 24 小时。因此在 URL 有效期内开始的大文件上传，可以在完成后正常确认；客户端无法用过期 URL发起新的 PUT。
 
 worker（均需服务身份）：
 
-- `POST /worker/v1/tasks/claim`：`worker_id`、`lease_seconds`
-- `POST /worker/v1/tasks/renew`：`task_id`、`lease_token`、`lease_seconds`
-- `POST /worker/v1/tasks/progress`：`task_id`、`lease_token`、`progress`、`stage`、可选 `eta_seconds`
-- `POST /worker/v1/tasks/complete`：租约字段、固定 `idempotency_key`、`output {object_key,etag,size_bytes}`，可带诊断摘要
-- `POST /worker/v1/tasks/fail`：租约字段、`retryable`、`error {code,message}`
+- `POST /v1/worker/tasks/claim`：`worker_id`、`lease_seconds`，成功响应为 `{task: {...}}`
+- `POST /v1/worker/tasks/{task_id}/renew`：`lease_token`、`lease_seconds`
+- `POST /v1/worker/tasks/{task_id}/progress`：`lease_token`、`progress`、`stage`、可选 `eta_seconds`
+- `POST /v1/worker/tasks/{task_id}/complete`：`lease_token`、`result.artifact`、`result.detection`，幂等键放在 `Idempotency-Key` 请求头
+- `POST /v1/worker/tasks/{task_id}/fail`：`lease_token`、`retryable`、`error {code,message}`
+
+worker 请求除 Bearer 身份外还必须携带 `X-CloudBase-Env: haoqiu-ai-prod-d3g2cm2xn3255c273`，防止跨环境误投。状态写入成功返回 `{accepted:true,task?:...}`。
 
 claim、续租、进度和终态更新均使用数据库事务。所有 worker 写入都校验 `task_id + lease_token + lease_expires_at`；完成接口对幂等键重放返回相同结果。可重试失败使用指数退避，最多三次。
 

@@ -33,26 +33,34 @@ export class TaskService {
     const inputKey = `inputs/${ownerId}/${uploadId}/source${safeExtension(filename)}`;
     const outputKey = `outputs/${ownerId}/${uploadId}/annotated.mp4`;
     const created = this.now();
+    const ticketExpiresAt = new Date(created.getTime() + this.config.uploadUrlSeconds * 1000);
     const upload: UploadRecord = {
       _id: uploadId, owner_id: ownerId, input_object_key: inputKey, output_object_key: outputKey,
       original_filename: filename, content_type: contentType, expected_size_bytes: size,
       duration_seconds: duration, client_match_id: body.client_match_id ? String(body.client_match_id).slice(0, 128) : undefined,
-      status: "pending", created_at: created, expires_at: new Date(created.getTime() + this.config.uploadUrlSeconds * 1000)
+      status: "pending", created_at: created, ticket_expires_at: ticketExpiresAt,
+      pending_expires_at: new Date(created.getTime() + this.config.pendingUploadSeconds * 1000)
     };
     await this.repo.createUpload(upload);
     return {
-      upload_id: uploadId, object_key: inputKey,
-      upload: { method: "PUT", url: await this.objects.signedPutUrl(inputKey, this.config.uploadUrlSeconds), expires_at: upload.expires_at.toISOString() },
-      limits: { max_size_bytes: this.config.maxUploadBytes, max_duration_seconds: this.config.maxDurationSeconds }
+      upload_id: uploadId,
+      method: "PUT" as const,
+      upload_url: await this.objects.signedPutUrl(inputKey, this.config.uploadUrlSeconds),
+      headers: {},
+      expires_at: ticketExpiresAt.toISOString(),
+      max_size_bytes: this.config.maxUploadBytes
     };
   }
 
-  async confirmUpload(ownerId: string, uploadId: string): Promise<TaskRecord> {
+  async confirmUpload(ownerId: string, uploadId: string, clientMatchId?: string): Promise<TaskRecord> {
     const upload = await this.repo.getUpload(uploadId);
     if (!upload || upload.owner_id !== ownerId) throw new ApiError(404, "UPLOAD_NOT_FOUND", "上传记录不存在");
+    if (clientMatchId !== undefined && upload.client_match_id !== clientMatchId) {
+      throw new ApiError(409, "CLIENT_MATCH_MISMATCH", "比赛标识与上传票据不一致");
+    }
     const existing = await this.repo.getTask(uploadId);
     if (existing) return existing;
-    if (new Date(upload.expires_at).getTime() <= this.now().getTime()) throw new ApiError(409, "UPLOAD_EXPIRED", "上传票据已过期");
+    if (new Date(upload.pending_expires_at).getTime() <= this.now().getTime()) throw new ApiError(409, "UPLOAD_EXPIRED", "待确认上传记录已过期");
     const metadata = await this.objects.head(upload.input_object_key);
     if (metadata.sizeBytes !== upload.expected_size_bytes) throw new ApiError(409, "UPLOAD_SIZE_MISMATCH", "上传对象大小与申请不一致");
     const now = this.now();
@@ -75,7 +83,11 @@ export class TaskService {
   async resultUrl(ownerId: string, taskId: string) {
     const task = await this.taskForUser(ownerId, taskId);
     if (task.status !== "succeeded" || !task.output) throw new ApiError(409, "RESULT_NOT_READY", "检测结果尚未生成");
-    return { url: await this.objects.signedGetUrl(task.output.object_key, this.config.resultUrlSeconds), expires_in: this.config.resultUrlSeconds };
+    return {
+      url: await this.objects.signedGetUrl(task.output.object_key, this.config.resultUrlSeconds),
+      expires_at: new Date(this.now().getTime() + this.config.resultUrlSeconds * 1000).toISOString(),
+      content_type: "video/mp4" as const
+    };
   }
   async claim(body: any) {
     const workerId = String(body.worker_id || "");

@@ -28,7 +28,7 @@ export class CloudBaseRepository implements TaskRepository {
       if (existing) return existing;
       const current = one<UploadRecord>(await tx.collection("haoqiu_uploads").doc(upload._id).get());
       if (!current || current.owner_id !== upload.owner_id) throw new ApiError(404, "UPLOAD_NOT_FOUND", "上传记录不存在");
-      if (current.expires_at.getTime() <= Date.now()) throw new ApiError(409, "UPLOAD_EXPIRED", "上传票据已过期");
+      if (new Date(current.pending_expires_at).getTime() <= Date.now()) throw new ApiError(409, "UPLOAD_EXPIRED", "待确认上传记录已过期");
       await tx.collection("haoqiu_detection_tasks").add(task);
       await tx.collection("haoqiu_uploads").doc(upload._id).update({ status: "confirmed", confirmed_at: task.created_at });
       return task;

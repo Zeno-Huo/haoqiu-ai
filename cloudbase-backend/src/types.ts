@@ -12,7 +12,8 @@ export interface UploadRecord {
   client_match_id?: string;
   status: "pending" | "confirmed";
   created_at: Date;
-  expires_at: Date;
+  ticket_expires_at: Date;
+  pending_expires_at: Date;
 }
 
 export interface TaskRecord {

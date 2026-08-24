@@ -3,6 +3,7 @@ export interface Config {
   bucket: string;
   region: string;
   uploadUrlSeconds: number;
+  pendingUploadSeconds: number;
   resultUrlSeconds: number;
   rawRetentionDays: number;
   resultRetentionDays: number;
@@ -26,6 +27,7 @@ export const loadConfig = (): Config => ({
   bucket: process.env.COS_BUCKET || "haoqiu-ai-media-1352817304",
   region: process.env.COS_REGION || "ap-shanghai",
   uploadUrlSeconds: Math.min(integer("UPLOAD_URL_SECONDS", 600), 900),
+  pendingUploadSeconds: integer("PENDING_UPLOAD_SECONDS", 86400),
   resultUrlSeconds: Math.min(integer("RESULT_URL_SECONDS", 600), 900),
   rawRetentionDays: integer("RAW_RETENTION_DAYS", 7),
   resultRetentionDays: integer("RESULT_RETENTION_DAYS", 30),
