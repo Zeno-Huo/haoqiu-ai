@@ -1,0 +1,46 @@
+{
+  "job_id": "job_f1a0649cd2d746a0aab85182ca8a1469",
+  "client_match_id": "hai-warm-001",
+  "status": "succeeded",
+  "progress": 100,
+  "stage": "completed",
+  "created_at": "2026-08-24T03:49:05.851133Z",
+  "started_at": "2026-08-24T03:49:05.851791Z",
+  "completed_at": "2026-08-24T03:50:30.320517Z",
+  "model": {
+    "name": "football-player-detection",
+    "version": "current-hai-weight"
+  },
+  "input": {
+    "filename": "user-test.mp4",
+    "duration_seconds": 20.27,
+    "width": 720,
+    "height": 1280,
+    "fps": 30.0
+  },
+  "diagnostics": {
+    "processed_frames": 608,
+    "classes_seen": [
+      "ball",
+      "goalkeeper",
+      "player",
+      "referee"
+    ],
+    "frame_detections_by_class": {
+      "ball": 16,
+      "goalkeeper": 51,
+      "player": 292,
+      "referee": 270
+    }
+  },
+  "warnings": [
+    "检测结果可能包含漏检和类别误判",
+    "逐帧检测次数不代表唯一球员人数"
+  ],
+  "artifacts": {
+    "annotated_video_url": "/api/v1/detection-jobs/job_f1a0649cd2d746a0aab85182ca8a1469/artifacts/annotated-video"
+  },
+  "error": null,
+  "source_path": "/root/haoqiu-service/jobs/job_f1a0649cd2d746a0aab85182ca8a1469/user-test.mp4",
+  "output_path": "/root/haoqiu-service/jobs/job_f1a0649cd2d746a0aab85182ca8a1469/annotated.mp4"
+}
