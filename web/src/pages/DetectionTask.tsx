@@ -9,6 +9,7 @@ import {
   isCloudDetectionConfigured,
 } from '../lib/cloudDetectionApi'
 import { getMatch, saveMatch } from '../lib/storage'
+import { buildDetectionStats, classLabel } from '../lib/detectionStats'
 import { getCachedVideoFile } from '../lib/videoFileCache'
 import { ensureUploadedVideo, UPLOAD_PHASE_LABELS } from '../lib/cloudUploadWorkflow'
 import type { UploadPhase } from '../lib/cloudUploadWorkflow'
@@ -31,7 +32,7 @@ async function ensureCloudWorkflow(
   const uploadId = await ensureUploadedVideo(matchId, file, listener)
   const job = await createCloudDetectionJob(uploadId, matchId)
   const latest = getMatch(matchId)
-  if (latest) saveMatch({ ...latest, cloudUploadId: uploadId, cloudJobId: job.job_id, cloudDetectionJob: safeJobSnapshot(job) })
+  if (latest) saveMatch({ ...latest, cloudUploadId: uploadId, cloudJobId: job.job_id, cloudDetectionJob: safeJobSnapshot(job), detectionStats: buildDetectionStats(job) })
   return job
 }
 
@@ -111,7 +112,7 @@ export default function DetectionTask() {
             setJob(current)
             setMessage('')
             const currentMatch = getMatch(match.id) ?? match
-            saveMatch({ ...currentMatch, cloudJobId: current.job_id, cloudDetectionJob: safeJobSnapshot(current) })
+            saveMatch({ ...currentMatch, cloudJobId: current.job_id, cloudDetectionJob: safeJobSnapshot(current), detectionStats: buildDetectionStats(current) })
             if (current.status === 'succeeded') {
               if (current.artifacts?.annotated_video_ready) await loadResult(current.job_id)
               return
@@ -143,6 +144,7 @@ export default function DetectionTask() {
   const persistedMatch = getMatch(initialMatch.id) ?? initialMatch
   const terminalFailure = job?.status === 'failed'
   const success = job?.status === 'succeeded'
+  const detectionStats = job ? buildDetectionStats(job) : undefined
   const progress = job ? Math.min(100, Math.max(0, job.progress)) : uploadProgress
   const stageLabel = job
     ? (job.stage ? STAGE_LABELS[job.stage] : job.status === 'queued' ? STAGE_LABELS.queued : '云检测任务处理中')
@@ -225,6 +227,21 @@ export default function DetectionTask() {
                 </dl>
 
                 {job.warnings && job.warnings.length > 0 && <div className="rounded-md border border-[var(--attack)] bg-[var(--content)] p-4"><p className="text-sm font-medium text-[var(--attack)]">检测警告</p><ul className="mt-2 space-y-1 text-sm leading-6 text-[var(--text-secondary)]">{job.warnings.map((warning) => <li key={warning}>· {warning}</li>)}</ul></div>}
+
+                {detectionStats && (
+                  <section className="rounded-md border border-[var(--ai)] bg-[var(--content)] p-4">
+                    <p className="text-sm font-semibold text-[var(--text-primary)]">真实检测概览 · GPU 逐帧目标检测</p>
+                    <p className="mt-1 text-xs leading-5 text-[var(--text-muted)]">以下数据由本次模型逐帧检测真实得出，非演示数据。球员个人拿球 / 传球 / 射门统计需球员追踪，待接入。</p>
+                    <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 text-sm sm:grid-cols-3">
+                      <div><dt className="text-xs text-[var(--text-muted)]">球员在场帧占比</dt><dd className="mt-1 font-score text-[var(--ai)]">{detectionStats.playerPresenceRate}%</dd></div>
+                      <div><dt className="text-xs text-[var(--text-muted)]">球出现帧占比</dt><dd className="mt-1 font-score text-[var(--ai)]">{detectionStats.ballPresenceRate}%</dd></div>
+                      <div><dt className="text-xs text-[var(--text-muted)]">已处理帧 / 总帧</dt><dd className="mt-1 font-score text-[var(--ai)]">{detectionStats.processedFrames} / {detectionStats.sourceFrames}</dd></div>
+                      {Object.entries(detectionStats.frameDetectionsByClass).map(([cls, count]) => (
+                        <div key={cls}><dt className="text-xs text-[var(--text-muted)]">{classLabel(cls)} 检测帧数</dt><dd className="mt-1 font-score text-[var(--text-primary)]">{count}</dd></div>
+                      ))}
+                    </dl>
+                  </section>
+                )}
 
                 <div>
                   <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="text-base font-semibold text-[var(--text-primary)]">查看检测视频</h2><button className="text-sm text-[var(--ai)] hover:underline" type="button" onClick={() => void refreshResultUrl()}>刷新播放地址</button></div>
