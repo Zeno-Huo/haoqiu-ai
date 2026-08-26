@@ -10,6 +10,15 @@ function env(name, fallback = "") {
   return process.env[name] || fallback;
 }
 
+function origins() {
+  return [...new Set(
+    env("ALLOWED_WEB_ORIGIN")
+      .split(/[,;]/)
+      .map((value) => value.trim())
+      .filter(Boolean),
+  )];
+}
+
 function runtimeCredentials() {
   return {
     SecretId: env("TENCENTCLOUD_SECRETID", env("TENCENT_SECRET_ID")),
@@ -53,7 +62,7 @@ async function configureCors() {
     ResponseVary: "true",
     CORSRules: [
       {
-        AllowedOrigin: [env("ALLOWED_WEB_ORIGIN")],
+        AllowedOrigin: origins(),
         AllowedMethod: ["PUT", "GET", "HEAD"],
         AllowedHeader: ["*"],
         ExposeHeader: ["ETag"],
@@ -61,7 +70,7 @@ async function configureCors() {
       },
     ],
   });
-  return { status: "configured", origin: env("ALLOWED_WEB_ORIGIN") };
+  return { status: "configured", origins: origins() };
 }
 
 exports.main = async (event = {}) => {
