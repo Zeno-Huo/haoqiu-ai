@@ -1,0 +1,13 @@
+{
+  "name": "haoqiu-cloudbase-init",
+  "version": "0.1.0",
+  "private": true,
+  "main": "index.js",
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@cloudbase/node-sdk": "^3.10.0",
+    "cos-nodejs-sdk-v5": "^2.14.7"
+  }
+}
