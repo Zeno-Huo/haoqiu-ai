@@ -1,0 +1,23 @@
+{
+  "name": "haoqiu-cloudbase-backend",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Minimal CloudBase HTTP function for private COS uploads and HAI task leasing",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "node --test dist/test/*.test.js",
+    "check": "npm run build && npm test"
+  },
+  "dependencies": {
+    "@cloudbase/node-sdk": "^3.10.0",
+    "cos-nodejs-sdk-v5": "^2.14.7"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "typescript": "^5.7.2"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
