@@ -1,4 +1,6 @@
 // 好球Ai · MVP 阶段一 数据类型定义
+import type { DetectionJob } from './detectionTypes'
+import type { CloudDetectionJob } from './cloudDetectionTypes'
 
 export type MatchType = '5v5' | '7v7' | '11v11'
 
@@ -15,6 +17,26 @@ export interface Player {
   position: Position
 }
 
+/** 球队成员档案：号码与位置均为偏好信息，不作为永久身份凭证。 */
+export interface TeamMember {
+  id: string
+  name: string
+  nickname?: string
+  commonNumber?: string
+  preferredPosition: Position
+  createdAt: number
+}
+
+/** MVP 先支持队长维护一支自己的球队。 */
+export interface TeamProfile {
+  id: string
+  name: string
+  members: TeamMember[]
+  updatedAt: number
+}
+
+export type IdentificationStatus = 'pending' | 'confirmed' | 'skipped'
+
 /** 比赛 */
 export interface Match {
   id: string
@@ -25,6 +47,34 @@ export interface Match {
   teamName: string // 我的队名
   myScore: number // 我方进球
   oppScore: number // 对方进球
+  /** 对手名称与对比数据：当前均为本地确定性演示数据 */
+  opponentName?: string
+  possessionHome?: number
+  possessionAway?: number
+  shotsAway?: number
+  teamId?: string
+  videoName?: string
+  videoSource?: 'local-file' | 'demo'
+  /** 浏览器本地读取的文件信息；文件本身不写入持久存储。 */
+  videoMeta?: {
+    sizeBytes: number
+    durationSeconds?: number
+    width?: number
+    height?: number
+  }
+  identificationStatus?: IdentificationStatus
+  /** 画面候选球员 ID -> 球队成员 ID。只有出现在此表中的身份才视为已由队长确认。 */
+  playerIdentityMap?: Record<string, string>
+  /** 真实检测任务可刷新恢复；与本地球队复盘 Demo 分开。 */
+  detectionJobId?: string
+  detectionJob?: DetectionJob
+  /** COS 整段视频已上传后才持久化 upload_id；不保存任何签名 URL。 */
+  cloudUploadId?: string
+  cloudJobId?: string
+  cloudDetectionJob?: CloudDetectionJob
+  /** 即时分析（视觉大模型文字复盘）任务；与深度复盘任务相互独立、可并存。 */
+  instantJobId?: string
+  instantAnalysisJob?: CloudDetectionJob
   players: Player[]
   analysis?: PlayerAnalysis[]
   createdAt: number
@@ -40,11 +90,12 @@ export interface MatchSummary {
   points: string[] // 补充要点（不足 / 其余可提升点 / 次亮点）
 }
 
-/** 球员客观数据统计（10 项，全部来自视频中可观察的事件） */
+/** 球员客观数据统计，全部由可观察事件聚合或派生。 */
 export interface PlayerStats {
   touches: number // 拿球次数（接球/触球总次数）
   touchesSuccess: number // 拿球成功次数
-  turnovers: number // 失误次数（丢球、停球/处理失误）
+  turnovers: number // 其他失误（不含传球失误与被断球）
+  dispossessed: number // 持球时被对手断球
   passes: number // 传球次数
   passesSuccess: number // 传球成功次数
   shots: number // 射门次数
@@ -62,7 +113,7 @@ export interface Highlight {
 }
 
 /** 个人事件类型 */
-export type EventType = '拿球' | '传球' | '射门' | '突破' | '拦截' | '抢断'
+export type EventType = '拿球' | '传球' | '射门' | '突破' | '拦截' | '抢断' | '被断'
 
 export type EventOutcome = '成功' | '失误' | '一般'
 
@@ -94,4 +145,4 @@ export const MATCH_TYPE_DESC: Record<MatchType, string> = {
   '11v11': '标准 11 人制',
 }
 
-export const EVENT_TYPES: EventType[] = ['拿球', '传球', '射门', '突破', '拦截', '抢断']
+export const EVENT_TYPES: EventType[] = ['拿球', '传球', '射门', '突破', '拦截', '抢断', '被断']
