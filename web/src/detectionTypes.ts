@@ -17,6 +17,8 @@ export interface DetectionInputInfo {
 
 export interface DetectionDiagnostics {
   processed_frames: number
+  source_frames: number
+  full_video_processed: boolean
   classes_seen: string[]
   frame_detections_by_class: Record<string, number>
 }
