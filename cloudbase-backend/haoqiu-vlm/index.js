@@ -112,12 +112,23 @@ const VLM_PROMPT = `你是一名足球比赛视频事件标注员。请完整观
 }
 球员看不清姓名时 name 使用 null；能看到号码就填写 number。只呈现观察到的事件和数据，不给换人、换位等强制决定。`;
 
-async function callQwenVL(videoUrl) {
+function analysisContextPrompt(context) {
+  if (!context || typeof context !== "object") return "本场我方没有队长标记；team 只有在画面可明确区分时才填写 home/away，否则使用 null。";
+  const lines = ["队长已提供本场我方视觉线索："];
+  if (typeof context.team_name === "string" && context.team_name.trim()) lines.push(`- 看板中 home 可命名为：${context.team_name.trim()}`);
+  if (typeof context.jersey_hint === "string" && context.jersey_hint.trim()) lines.push(`- 我方球衣补充：${context.jersey_hint.trim()}`);
+  const point = context.opening_frame_point;
+  if (point && Number.isFinite(point.x) && Number.isFinite(point.y)) lines.push(`- 视频开头帧中，画面横向 ${Math.round(point.x * 100)}%、纵向 ${Math.round(point.y * 100)}% 附近被队长标记的球员属于我方。以该球员的同队球衣特征区分我方与对方。`);
+  lines.push("此线索只适用于本次视频；看不清或无法把同队特征延续到事件时，team 使用 null，不能猜。" );
+  return lines.join("\n");
+}
+
+async function callQwenVL(videoUrl, analysisContext) {
   const body = {
     model: vlmModel,
     input: {
       messages: [
-        { role: "user", content: [{ video: videoUrl }, { text: VLM_PROMPT }] }
+        { role: "user", content: [{ video: videoUrl }, { text: `${VLM_PROMPT}\n\n${analysisContextPrompt(analysisContext)}` }] }
       ]
     },
     parameters: { result_format: "message" }
@@ -164,7 +175,7 @@ exports.main = async (event) => {
       text = mockSummary(task);
     } else {
       const videoUrl = await signedGetUrl(task.input_object_key, 3600);
-      text = await callQwenVL(videoUrl);
+      text = await callQwenVL(videoUrl, task.analysis_context);
     }
 
     const parsed = parseVlmText(text);

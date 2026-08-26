@@ -23,6 +23,11 @@ export interface TaskRecord {
   client_match_id?: string;
   /** 分析模式：instant = 即时分析(VLM 视频理解，快)；deep = 深度复盘(GPU 检测，慢) */
   mode?: "instant" | "deep" | "single";
+  analysis_context?: {
+    team_name?: string;
+    jersey_hint?: string;
+    opening_frame_point?: { x: number; y: number };
+  };
   status: TaskStatus;
   stage: string;
   progress: number;

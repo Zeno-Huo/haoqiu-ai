@@ -82,7 +82,7 @@ export class TaskService {
   }
 
   /** 即时分析(VLM)：基于已上传的视频创建任务，由 haoqiu-vlm 异步处理。 */
-  async createInstantJob(ownerId: string, uploadId: string, clientMatchId?: string): Promise<TaskRecord> {
+  async createInstantJob(ownerId: string, uploadId: string, clientMatchId?: string, analysisContext?: TaskRecord["analysis_context"]): Promise<TaskRecord> {
     const upload = await this.repo.getUpload(uploadId);
     if (!upload || upload.owner_id !== ownerId) throw new ApiError(404, "UPLOAD_NOT_FOUND", "上传记录不存在");
     const existing = await this.repo.getTask(uploadId);
@@ -90,7 +90,7 @@ export class TaskService {
     const now = this.now();
     const task: TaskRecord = {
       _id: upload._id, owner_id: ownerId, client_match_id: upload.client_match_id || clientMatchId,
-      mode: "instant", status: "queued", stage: "queued", progress: 0,
+      mode: "instant", analysis_context: analysisContext, status: "queued", stage: "queued", progress: 0,
       input_object_key: upload.input_object_key, output_object_key: upload.output_object_key,
       input: { filename: upload.original_filename, content_type: upload.content_type, size_bytes: upload.expected_size_bytes, duration_seconds: upload.duration_seconds },
       raw_lifecycle: { delete_after: addDays(now, this.config.rawRetentionDays) },

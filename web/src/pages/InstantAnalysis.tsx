@@ -18,10 +18,15 @@ import { setAnalysisMode } from '../lib/analysisMode'
 async function ensureInstantWorkflow(
   matchId: string,
   file: File | undefined,
+  teamContext: NonNullable<ReturnType<typeof getMatch>>['ourTeamContext'],
   listener: (phase: UploadPhase, progress: number) => void,
 ): Promise<CloudDetectionJob> {
   const uploadId = await ensureUploadedVideo(matchId, file, listener)
-  const job = await createInstantAnalysisJob(uploadId, matchId)
+  const job = await createInstantAnalysisJob(uploadId, matchId, teamContext ? {
+    team_name: teamContext.teamName,
+    jersey_hint: teamContext.jerseyHint,
+    opening_frame_point: teamContext.openingFramePoint,
+  } : undefined)
   const latest = getMatch(matchId)
   if (latest) saveMatch({ ...latest, cloudUploadId: uploadId, instantJobId: job.job_id, instantAnalysisJob: job })
   return job
@@ -80,7 +85,7 @@ export default function InstantAnalysis() {
             setMessage('本地视频文件已在刷新后丢失。云端上传尚未完成，请重新选择视频。')
             return
           }
-          const created = await ensureInstantWorkflow(match.id, file, (nextPhase, progress) => {
+          const created = await ensureInstantWorkflow(match.id, file, latest.ourTeamContext, (nextPhase, progress) => {
             if (cancelled) return
             setPhase(nextPhase)
             setUploadProgress(progress)

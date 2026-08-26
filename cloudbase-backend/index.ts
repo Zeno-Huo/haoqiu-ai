@@ -152,10 +152,18 @@ export const main = async (event: any, context: any) => {
     }
     if (method === "POST" && route === "/api/v1/instant-analysis") {
       if (!body.upload_id) throw new ApiError(400, "INVALID_INPUT", "upload_id 为必填项");
+      const rawContext = body.analysis_context && typeof body.analysis_context === "object" ? body.analysis_context : undefined;
+      const point = rawContext && rawContext.opening_frame_point && typeof rawContext.opening_frame_point === "object" ? rawContext.opening_frame_point : undefined;
+      const analysisContext = rawContext ? {
+        team_name: typeof rawContext.team_name === "string" ? rawContext.team_name.slice(0, 80) : undefined,
+        jersey_hint: typeof rawContext.jersey_hint === "string" ? rawContext.jersey_hint.slice(0, 160) : undefined,
+        opening_frame_point: point && Number.isFinite(point.x) && Number.isFinite(point.y) && point.x >= 0 && point.x <= 1 && point.y >= 0 && point.y <= 1 ? { x: point.x, y: point.y } : undefined
+      } : undefined;
       const task = await api.createInstantJob(
         currentUser(event, context),
         String(body.upload_id),
-        body.client_match_id ? String(body.client_match_id) : undefined
+        body.client_match_id ? String(body.client_match_id) : undefined,
+        analysisContext
       );
       getCloudApp()
         .callFunction({ name: "haoqiu-vlm", data: { taskId: task._id, envId: config.envId } })

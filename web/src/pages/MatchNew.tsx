@@ -24,6 +24,9 @@ export default function MatchNew() {
   const [selectedFile, setSelectedFile] = useState<File>()
   const [videoProbeState, setVideoProbeState] = useState<'idle' | 'probing' | 'ready' | 'error'>('idle')
   const [videoMeta, setVideoMeta] = useState<Match['videoMeta']>()
+  const [framePreview, setFramePreview] = useState('')
+  const [openingFramePoint, setOpeningFramePoint] = useState<{ x: number; y: number }>()
+  const [jerseyHint, setJerseyHint] = useState('')
   const [date, setDate] = useState(todayStr())
   const [type, setType] = useState<MatchType>('7v7')
   const [opponentName, setOpponentName] = useState('')
@@ -80,6 +83,11 @@ export default function MatchNew() {
       videoName,
       videoSource: selectedFile ? 'local-file' : 'demo',
       videoMeta,
+      ourTeamContext: mode === 'instant' ? {
+        teamName: team.name,
+        jerseyHint: jerseyHint.trim() || undefined,
+        openingFramePoint,
+      } : undefined,
       identificationStatus: 'pending',
       players,
       createdAt: Date.now(),
@@ -133,6 +141,8 @@ export default function MatchNew() {
               setSelectedFile(file)
               setVideoName(file?.name ?? '')
               setVideoMeta(file ? { sizeBytes: file.size } : undefined)
+              setFramePreview('')
+              setOpeningFramePoint(undefined)
               setVideoProbeState(file ? 'probing' : 'idle')
               if (file) {
                 const url = URL.createObjectURL(file)
@@ -153,6 +163,18 @@ export default function MatchNew() {
                   } else {
                     setVideoMeta({ sizeBytes: file.size, durationSeconds: probe.duration, width: probe.videoWidth, height: probe.videoHeight })
                     setVideoProbeState('ready')
+                    probe.currentTime = Math.min(0.2, Math.max(0, probe.duration / 2))
+                  }
+                }
+                probe.onseeked = () => {
+                  if (probeToken !== probeTokenRef.current) return
+                  const canvas = document.createElement('canvas')
+                  canvas.width = probe.videoWidth
+                  canvas.height = probe.videoHeight
+                  const context = canvas.getContext('2d')
+                  if (context && canvas.width && canvas.height) {
+                    context.drawImage(probe, 0, 0, canvas.width, canvas.height)
+                    setFramePreview(canvas.toDataURL('image/jpeg', 0.82))
                   }
                   URL.revokeObjectURL(url)
                 }
@@ -191,6 +213,25 @@ export default function MatchNew() {
               没有视频？使用演示片段
             </button>
           </div>
+
+          {mode === 'instant' && videoProbeState === 'ready' && selectedFile && (
+            <section className="mt-6 rounded-md border border-[var(--line)] bg-[var(--content)] p-4">
+              <h2 className="text-base font-semibold text-[var(--text-primary)]">确认本场我方（推荐）</h2>
+              <p className="mt-1 text-xs leading-5 text-[var(--text-muted)]">点击首帧中的任意一名我方球员。千问会把他所在一侧视为我方；这只是本场线索，不使用固定号码或固定球衣颜色。</p>
+              {framePreview ? (
+                <button type="button" className="relative mt-4 block w-full overflow-hidden rounded-md border border-[var(--line)] bg-black" onClick={(event) => {
+                  const rect = event.currentTarget.getBoundingClientRect()
+                  setOpeningFramePoint({ x: Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width)), y: Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height)) })
+                }} aria-label="点击标记本场我方球员">
+                  <img src={framePreview} alt="视频首帧，点击任意一名我方球员" className="block max-h-72 w-full object-contain" />
+                  {openingFramePoint && <span className="pointer-events-none absolute h-7 w-7 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-[var(--ai)] bg-[var(--ai)]/20 shadow-[0_0_0_4px_rgba(101,214,176,.18)]" style={{ left: `${openingFramePoint.x * 100}%`, top: `${openingFramePoint.y * 100}%` }} />}
+                </button>
+              ) : <p className="mt-4 rounded-md border border-dashed border-[var(--line)] p-4 text-xs text-[var(--text-muted)]">正在提取视频首帧…</p>}
+              <label className="field-label mt-4">我方球衣补充（可选）</label>
+              <input className="input-base" value={jerseyHint} maxLength={80} onChange={(event) => setJerseyHint(event.target.value)} placeholder="例如：白色上衣、深色短裤；或只写“荧光训练背心”" />
+              <p className={`mt-2 text-xs ${openingFramePoint ? 'text-[var(--ai)]' : 'text-[var(--text-muted)]'}`}>{openingFramePoint ? '已标记我方球员；会随本次视频提交。' : '未标记也可分析，但模型更难稳定区分我方与对方。'}</p>
+            </section>
+          )}
 
           {error && <p className="mt-5 text-sm text-[var(--danger)]">{error}</p>}
           <div className="mt-6">

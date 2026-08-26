@@ -62,6 +62,12 @@ export interface Match {
     width?: number
     height?: number
   }
+  /** 每场由队长确认的我方视觉线索，不依赖固定队名、号码或球衣颜色。 */
+  ourTeamContext?: {
+    teamName?: string
+    jerseyHint?: string
+    openingFramePoint?: { x: number; y: number }
+  }
   identificationStatus?: IdentificationStatus
   /** 画面候选球员 ID -> 球队成员 ID。只有出现在此表中的身份才视为已由队长确认。 */
   playerIdentityMap?: Record<string, string>

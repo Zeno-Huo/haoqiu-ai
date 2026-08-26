@@ -111,8 +111,14 @@ export function getSignedDetectionVideo(jobId: string): Promise<SignedDetectionV
 }
 
 /** 即时分析：复用同一段已上传视频，交给视觉大模型出文字复盘。 */
-export function createInstantAnalysisJob(uploadId: string, clientMatchId: string): Promise<CloudDetectionJob> {
-  return invoke('POST', '/api/v1/instant-analysis', { upload_id: uploadId, client_match_id: clientMatchId }, 202)
+export interface InstantTeamContext {
+  team_name?: string
+  jersey_hint?: string
+  opening_frame_point?: { x: number; y: number }
+}
+
+export function createInstantAnalysisJob(uploadId: string, clientMatchId: string, teamContext?: InstantTeamContext): Promise<CloudDetectionJob> {
+  return invoke('POST', '/api/v1/instant-analysis', { upload_id: uploadId, client_match_id: clientMatchId, analysis_context: teamContext }, 202)
 }
 
 export function getInstantAnalysisJob(jobId: string): Promise<CloudDetectionJob> {
