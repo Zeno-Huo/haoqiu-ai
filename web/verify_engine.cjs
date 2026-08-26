@@ -15,7 +15,7 @@ function assert(cond, label) {
 
 function mkStats(o) {
   return Object.assign({
-    touches: 0, touchesSuccess: 0, turnovers: 0,
+    touches: 0, touchesSuccess: 0, turnovers: 0, dispossessed: 0,
     passes: 0, passesSuccess: 0, shots: 0, shotsOnTarget: 0,
     dribbles: 0, interceptions: 0, tackles: 0,
   }, o || {});
@@ -49,6 +49,8 @@ esbuild.build({
   assert(scoreFromStats(high) === 10, '极高分 → clamp 到 10.0');
   const low = mkStats({ turnovers: 20 });
   assert(scoreFromStats(low) === 3, '极低分 → clamp 到 3.0');
+  const dispossessed = mkStats({ dispossessed: 1 });
+  assert(scoreFromStats(dispossessed) === 5.5, '被断 1 次独立扣分，不并入其他失误');
 
   console.log('\n=== 2. 称号判定（全队某指标第一） ===');
   let players = [mkPlayer('A', '前锋'), mkPlayer('B', '前锋'), mkPlayer('C', '中场')];
@@ -124,7 +126,7 @@ esbuild.build({
     ],
     createdAt: Date.now(),
   };
-  const statKeys = ['touches', 'touchesSuccess', 'turnovers', 'passes', 'passesSuccess', 'shots', 'shotsOnTarget', 'dribbles', 'interceptions', 'tackles'];
+  const statKeys = ['touches', 'touchesSuccess', 'turnovers', 'dispossessed', 'passes', 'passesSuccess', 'shots', 'shotsOnTarget', 'dribbles', 'interceptions', 'tackles'];
   const r1 = analyzeMatch(match);
   const r2 = analyzeMatch(match);
   let ok = true;
@@ -135,10 +137,14 @@ esbuild.build({
     if (a.stats.touchesSuccess > a.stats.touches) ok = false;
     if (a.stats.passesSuccess > a.stats.passes) ok = false;
     if (a.stats.shotsOnTarget > a.stats.shots) ok = false;
-    for (const e of a.events) if (e.time < 0 || e.time > match.duration) ok = false;
+    for (const e of a.events) {
+      if (e.time < 0 || e.time > match.duration) ok = false;
+      if (typeof e.type !== 'string' || typeof e.outcome !== 'string' || typeof e.note !== 'string') ok = false;
+    }
+    if (a.stats.dispossessed !== a.events.filter((e) => e.type === '被断').length) ok = false;
     if (!a.highlight || typeof a.highlight.value !== 'number') ok = false;
   }
-  assert(ok, '评分 [3,10] 一位小数、统计非负且子项≤总量、事件时间在时长内、亮点存在');
+  assert(ok, '评分 [3,10] 一位小数、统计非负且子项≤总量、被断独立统计、事件元数据完整且时间在时长内');
   assert(JSON.stringify(r1) === JSON.stringify(r2), '两次 analyzeMatch 结果一致（确定性）');
 
   const fwd = r1.filter((a) => match.players.find((p) => p.id === a.playerId).position === '前锋');
