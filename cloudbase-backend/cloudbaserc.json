@@ -18,6 +18,21 @@
         "ALLOW_TEST_IDENTITY": "false",
         "ALLOWED_WEB_ORIGINS": "https://haoqiu-ai-prod-d3g2cm2xn3255c273-1352817304.tcloudbaseapp.com"
       }
+    },
+    {
+      "name": "haoqiu-vlm",
+      "timeout": 900,
+      "runtime": "Nodejs18.15",
+      "memorySize": 256,
+      "handler": "index.main",
+      "installDependency": true,
+      "envVariables": {
+        "CLOUDBASE_ENV_ID": "haoqiu-ai-prod-d3g2cm2xn3255c273",
+        "COS_BUCKET": "haoqiu-ai-media-1352817304",
+        "COS_REGION": "ap-shanghai",
+        "VLM_PROVIDER": "qwen",
+        "VLM_MODEL": "qwen-vl-plus"
+      }
     }
   ]
 }
