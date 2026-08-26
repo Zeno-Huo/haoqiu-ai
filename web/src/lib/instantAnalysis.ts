@@ -32,6 +32,8 @@ export interface InstantPlayer {
   number?: string
   position?: string
   score?: number
+  title?: string
+  highlight?: { label?: string; value?: number; note?: string }
   stats: InstantTeamStats
   insights: string[]
   events: InstantEvent[]
@@ -131,6 +133,16 @@ function player(value: unknown, index: number): InstantPlayer {
     number: text(first(item, ['number', '号码'])),
     position: text(first(item, ['position', '位置'])),
     score: number(first(item, ['score', 'rating', '评分'])),
+    title: text(first(item, ['title', '称号'])),
+    highlight: (() => {
+      const itemValue = object(first(item, ['highlight', '亮点']))
+      if (!itemValue) return undefined
+      return {
+        label: text(first(itemValue, ['label', 'name', '指标', '名称'])),
+        value: number(first(itemValue, ['value', '数值'])),
+        note: text(first(itemValue, ['note', 'description', '说明'])),
+      }
+    })(),
     stats: stats(first(item, ['stats', 'statistics', '数据']) || item),
     insights,
     events: Array.isArray(eventValue) ? eventValue.map(event) : [],
