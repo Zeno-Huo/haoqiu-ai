@@ -1,5 +1,7 @@
 import type { ReactNode } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
+import { useEffect, useState } from 'react'
+import { getAnalysisMode, setAnalysisMode, subscribeAnalysisMode, type AnalysisMode } from '../lib/analysisMode'
 
 function Logo() {
   return (
@@ -17,6 +19,23 @@ function Logo() {
 }
 
 export default function Layout({ children }: { children: ReactNode }) {
+  const location = useLocation()
+  const navigate = useNavigate()
+  const [mode, setMode] = useState<AnalysisMode>(() => getAnalysisMode())
+
+  useEffect(() => subscribeAnalysisMode(setMode), [])
+
+  function switchMode(next: AnalysisMode) {
+    setAnalysisMode(next)
+    const match = location.pathname.match(/^\/match\/([^/]+)(?:\/(instant|analyzing|detection))?$/)
+    if (!match) return
+    const currentRoute = match[2] || (next === 'demo' ? 'analyzing' : 'report')
+    if (currentRoute === 'detection' && next === 'practical') return
+    if (currentRoute === (next === 'demo' ? 'analyzing' : 'instant')) return
+    if (next === 'demo') navigate(`/match/${match[1]}/analyzing`)
+    else navigate(`/match/${match[1]}/instant`)
+  }
+
   return (
     <div className="flex min-h-screen flex-col">
       <header
@@ -27,6 +46,10 @@ export default function Layout({ children }: { children: ReactNode }) {
             <Logo />
           </Link>
           <nav className="flex items-center gap-1 text-sm">
+            <div className="mode-switch" aria-label="分析模式">
+              <button type="button" className={mode === 'practical' ? 'is-active' : ''} onClick={() => switchMode('practical')}>实操模式</button>
+              <button type="button" className={mode === 'demo' ? 'is-active' : ''} onClick={() => switchMode('demo')}>演示模式</button>
+            </div>
             <Link
               to="/team"
               className="rounded-md px-3 py-2 font-medium text-[var(--text-secondary)] transition hover:bg-[var(--surface)] hover:text-[var(--text-primary)]"

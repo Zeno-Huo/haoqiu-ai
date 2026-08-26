@@ -8,6 +8,7 @@
 // 与 haoqiu-api 的 CosRepository(键路径 db/task/<id>.json) 保持一致。
 
 const COS = require("cos-nodejs-sdk-v5");
+const { parseVlmText } = require("./vlm-schema");
 
 const envId = process.env.CLOUDBASE_ENV_ID || "haoqiu-ai-prod-d3g2cm2xn3255c273";
 const bucket = process.env.COS_BUCKET || "haoqiu-ai-media-1352817304";
@@ -82,14 +83,24 @@ async function updateTask(taskId, patch) {
   return updated;
 }
 
-const VLM_PROMPT = `你是一名足球战术分析助手，正在为业余球队的教练做「即时分析」——比赛进行中或刚结束一小节，教练需要快速得到可执行的判断。
+const VLM_PROMPT = `你是一名足球比赛视频分析助手。请完整观看视频，为球队复盘看板输出严格的 JSON，不要输出 Markdown、代码围栏、解释或寒暄。
+必须尽可能填写以下所有字段；无法从画面判断的字段使用 null，数组没有内容时使用 []。不要删除字段，不要输出额外顶层字段以外的自然语言。
+所有结果都是视觉模型判断，顶层 source 固定为 "qwen-vlm"，data_status 固定为 "model_estimate"，notes 至少包含 "字段由视觉模型根据视频推断"。
 
-请观看这段比赛视频，用中文输出结构化文字总结，控制在 400 字以内，重点突出：
-1. 关键事件：进球、绝佳机会、威胁进攻、失误导致被打反击、红黄牌、换人。
-2. 节奏与态势：哪段时间我方占优/被动，攻防转换快慢。
-3. 位置与跑动：哪个区域最薄弱、哪条线脱节。
-4. 给教练的 2–3 条即时建议（如：某位置补防、提速、换人）。
-不要编造具体球员姓名；如无法看清号码，用「左边锋」「后腰」等位置描述。只输出分析内容，不要寒暄。`;
+输出结构（数字必须是 number，不要带单位）：
+{
+  "schema_version":"1.0", "source":"qwen-vlm", "data_status":"model_estimate", "notes":[],
+  "match":{"name":null,"duration_seconds":null,"score":{"home":null,"away":null}},
+  "teams":{
+    "home":{"id":null,"name":null,"score":null,"possession_pct":null,"shots":null,"shots_on_target":null,"average_score":null,"stats":{"passes":null,"passes_success":null,"pass_errors":null,"shots":null,"shots_on_target":null,"touches":null,"touches_success":null,"turnovers":null,"dispossessed":null,"dribbles":null,"interceptions":null,"tackles":null,"goals":null,"assists":null},"highlights":[],"weaknesses":[],"next_focus":[]},
+    "away":{"id":null,"name":null,"score":null,"possession_pct":null,"shots":null,"shots_on_target":null,"average_score":null,"stats":{"passes":null,"passes_success":null,"pass_errors":null,"shots":null,"shots_on_target":null,"touches":null,"touches_success":null,"turnovers":null,"dispossessed":null,"dribbles":null,"interceptions":null,"tackles":null,"goals":null,"assists":null},"highlights":[],"weaknesses":[],"next_focus":[]}
+  },
+  "summary":{"headline":null,"highlight":null,"weakness":null,"next_focus":null},
+  "players":[{"id":null,"number":null,"name":null,"position":null,"score":null,"stats":{"touches":null,"touches_success":null,"turnovers":null,"dispossessed":null,"passes":null,"passes_success":null,"pass_errors":null,"shots":null,"shots_on_target":null,"dribbles":null,"interceptions":null,"tackles":null,"goals":null,"assists":null},"insights":[],"events":[],"title":null,"highlight":null,"source":"qwen-vlm"}],
+  "events":[{"time_seconds":null,"type":null,"team":null,"player_id":null,"player_number":null,"outcome":null,"note":null,"source":"qwen-vlm"}],
+  "source_frames":[]
+}
+球员看不清姓名时 name 使用 null；能看到号码就填写 number。只呈现观察到的事件和数据，不给换人、换位等强制决定。`;
 
 async function callQwenVL(videoUrl) {
   const body = {
@@ -146,14 +157,19 @@ exports.main = async (event) => {
       text = await callQwenVL(videoUrl);
     }
 
+    const parsed = parseVlmText(text);
     await updateTask(taskId, {
       status: "succeeded",
       stage: "completed",
       progress: 100,
       text_result: {
         content: text,
+        raw_content: text,
         model: vlmApiKey ? `${vlmProvider}:${vlmModel}` : "demo",
-        generated_at: new Date().toISOString()
+        generated_at: new Date().toISOString(),
+        parse_status: parsed.parse_status,
+        parse_error: parsed.parse_error,
+        structured: parsed.structured
       },
       completed_at: new Date().toISOString()
     });

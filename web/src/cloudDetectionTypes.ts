@@ -22,8 +22,15 @@ export type CloudAnalysisMode = 'instant' | 'deep'
 
 export interface CloudTextResult {
   content: string
+  raw_content?: string
   model?: string
   generated_at?: string
+  parse_status?: 'parsed' | 'invalid' | 'empty'
+  parse_error?: string | null
+  /** VLM 结构化看板；旧服务仍可能只返回 content。 */
+  analysis?: unknown
+  dashboard?: unknown
+  structured?: unknown
 }
 
 export interface CloudDetectionJob {
@@ -44,6 +51,9 @@ export interface CloudDetectionJob {
     annotated_video_ready: boolean
   }
   text_result?: CloudTextResult
+  /** 兼容不同版本后端把结构化结果放在任务顶层。 */
+  analysis?: unknown
+  dashboard?: unknown
   error?: DetectionErrorInfo
 }
 

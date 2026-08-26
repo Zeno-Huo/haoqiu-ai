@@ -10,6 +10,9 @@ import { ensureUploadedVideo, UPLOAD_PHASE_LABELS } from '../lib/cloudUploadWork
 import type { UploadPhase } from '../lib/cloudUploadWorkflow'
 import { getMatch, saveMatch } from '../lib/storage'
 import { getCachedVideoFile } from '../lib/videoFileCache'
+import { parseInstantAnalysis } from '../lib/instantAnalysis'
+import InstantDashboard from '../components/InstantDashboard'
+import { setAnalysisMode } from '../lib/analysisMode'
 
 /** 即时分析：整段视频直传 COS 后交给视觉大模型出文字复盘。 */
 async function ensureInstantWorkflow(
@@ -24,7 +27,7 @@ async function ensureInstantWorkflow(
   return job
 }
 
-/** 把模型返回的纯文本切成可读段落；保留「小标题 + 列表」的层次。 */
+/** 兼容旧版 VLM 文字结果；新版优先渲染结构化看板。 */
 function renderReport(content: string) {
   const blocks = content.split(/\n{2,}/).map((block) => block.trim()).filter(Boolean)
   const source = blocks.length > 0 ? blocks : [content.trim()]
@@ -124,7 +127,7 @@ export default function InstantAnalysis() {
   const persistedMatch = getMatch(initialMatch.id) ?? initialMatch
   const success = job?.status === 'succeeded'
   const failed = job?.status === 'failed'
-  const report = job?.text_result?.content?.trim()
+  const parsed = job ? parseInstantAnalysis(job) : {}
   const progress = job ? Math.min(100, Math.max(0, job.progress)) : uploadProgress
   const stageLabel = job
     ? (job.status === 'queued' ? '等待视觉模型排队' : job.status === 'running' ? '视觉模型正在阅读比赛画面' : '即时分析处理中')
@@ -204,12 +207,9 @@ export default function InstantAnalysis() {
                   </div>
                 )}
 
-                <div className="rounded-md border border-[var(--line)] bg-[var(--content)] p-5">
-                  <h2 className="text-base font-semibold text-[var(--text-primary)]">比赛即时复盘</h2>
-                  {report
-                    ? <div className="mt-4 space-y-4">{renderReport(report)}</div>
-                    : <p className="mt-3 text-sm text-[var(--text-muted)]">任务已完成，但服务未返回文字内容。</p>}
-                </div>
+                {parsed.dashboard
+                  ? <InstantDashboard dashboard={parsed.dashboard} />
+                  : <div className="rounded-md border border-[var(--line)] bg-[var(--content)] p-5"><h2 className="text-base font-semibold text-[var(--text-primary)]">结构化看板尚未返回</h2><p className="mt-2 text-sm leading-6 text-[var(--text-muted)]">模型任务已完成，但当前服务只返回文字复盘，尚未提供比分、控球、射门、球队数据和球员卡字段。</p>{parsed.narrative && <div className="mt-5 space-y-4">{renderReport(parsed.narrative)}</div>}</div>}
                 <p className="text-xs leading-5 text-[var(--text-muted)]">以上结论由视觉大模型根据画面推断，可能存在误判；需要逐帧标注视频请使用深度复盘。</p>
               </div>
             )}
@@ -218,7 +218,7 @@ export default function InstantAnalysis() {
               <p className="text-xs leading-5 text-[var(--text-muted)]">深度复盘会对同一段视频做 GPU 逐帧检测并生成标注视频，耗时更长。</p>
               <div className="mt-3 flex flex-wrap gap-2">
                 <button className="btn-secondary" onClick={() => navigate('/match/' + initialMatch.id + '/detection')}>进入深度复盘</button>
-                <button className="btn-secondary" onClick={() => navigate('/match/' + initialMatch.id + '/analyzing')}>查看球队复盘 Demo</button>
+                <button className="btn-secondary" onClick={() => { setAnalysisMode('demo'); navigate('/match/' + initialMatch.id + '/analyzing') }}>切换到演示模式</button>
               </div>
             </div>
           </section>
