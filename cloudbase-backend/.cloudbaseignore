@@ -1,0 +1,10 @@
+# node_modules 临时允许随包上传（避免云端 installDependency 卡死）
+test
+src
+*.ts
+*.map
+tsconfig.json
+package-lock.json
+.env
+.env.*
+!.env.example
