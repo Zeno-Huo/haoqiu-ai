@@ -121,8 +121,9 @@ export const main = async (event: any, context: any) => {
     }
     if (method === "POST" && route === "/api/v1/cloud-detection-jobs") {
       if (!body.upload_id || !body.client_match_id) throw new ApiError(400, "INVALID_INPUT", "upload_id 和 client_match_id 为必填项");
+      const mode = body.mode === "single" ? "single" : "deep";
       return respond(202, publicTask(await api.confirmUpload(
-        currentUser(event, context), String(body.upload_id), String(body.client_match_id)
+        currentUser(event, context), String(body.upload_id), String(body.client_match_id), mode
       )));
     }
     let match = route.match(/^\/api\/v1\/uploads\/([^/]+)\/confirm$/);

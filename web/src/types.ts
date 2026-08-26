@@ -77,6 +77,11 @@ export interface Match {
   /** 即时分析（视觉大模型文字复盘）任务；与深度复盘任务相互独立、可并存。 */
   instantJobId?: string
   instantAnalysisJob?: CloudDetectionJob
+  /** single：用同一条 YOLO 检测链路生成单人候选与带框视频。 */
+  analysisMode?: 'single'
+  trackingJobId?: string
+  trackingDetectionJob?: CloudDetectionJob
+  trackingCandidateId?: string
   players: Player[]
   analysis?: PlayerAnalysis[]
   createdAt: number

@@ -43,7 +43,7 @@ export default function Home() {
 
       <section className="mx-auto max-w-5xl px-4 py-10">
         <section className="mb-12">
-          <div className="grid gap-4 sm:grid-cols-2">
+          <div className="grid gap-4 lg:grid-cols-3">
             <article className="panel border-[var(--ai)] p-6">
               <span className="font-score text-2xl font-bold text-[var(--ai)]">01</span>
               <h3 className="mt-2 text-xl font-semibold text-[var(--ai)]">即时分析</h3>
@@ -55,6 +55,12 @@ export default function Home() {
               <h3 className="mt-2 text-xl font-semibold text-[var(--ai)]">深度复盘</h3>
               <p className="mt-2 text-sm leading-6 text-[var(--text-muted)]">分析时间较长，仅适用赛后复盘以及球员成长。</p>
               <Link to="/match/new?mode=deep" className="btn-secondary mt-5 w-full justify-center">开始深度复盘 <span aria-hidden>→</span></Link>
+            </article>
+            <article className="panel border-[var(--ai)] p-6">
+              <span className="font-score text-2xl font-bold text-[var(--ai)]">03</span>
+              <h3 className="mt-2 text-xl font-semibold text-[var(--ai)]">单人跟拍</h3>
+              <p className="mt-2 text-sm leading-6 text-[var(--text-muted)]">从一段训练或比赛视频中选择一名球员，沉淀其动作片段与观察记录。</p>
+              <Link to="/match/new?mode=single" className="btn-secondary mt-5 w-full justify-center">开始单人跟拍 <span aria-hidden>→</span></Link>
             </article>
           </div>
         </section>

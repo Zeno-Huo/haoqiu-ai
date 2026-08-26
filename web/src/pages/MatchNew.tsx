@@ -32,13 +32,15 @@ export default function MatchNew() {
   const [error, setError] = useState('')
 
   const canStart = Boolean(videoName && videoProbeState === 'ready')
-  const modeTitle = mode === 'instant' ? '上传比赛视频，开始即时分析' : mode === 'deep' ? '上传比赛视频，开始深度复盘' : '上传比赛视频'
+  const modeTitle = mode === 'instant' ? '上传比赛视频，开始即时分析' : mode === 'deep' ? '上传比赛视频，开始深度复盘' : mode === 'single' ? '上传视频，开始单人跟拍' : '上传比赛视频'
   const modeHint = mode === 'instant'
     ? '选择一段球队视频，上传后由视觉大模型快速给出文字判断。'
     : mode === 'deep'
     ? '选择一段球队视频，上传后由 GPU 做逐帧检测并生成标注视频。'
+    : mode === 'single'
+    ? '选择一段以一名球员为主的训练或比赛视频。YOLO 先完成整段检测，再由你确认跟拍对象。'
     : '选择一段球队视频，先检查画面信息；下一步可选择真实检测或独立的球队复盘 Demo。'
-  const startLabel = mode === 'instant' ? '开始即时分析' : mode === 'deep' ? '开始深度复盘' : '下一步：检查视频'
+  const startLabel = mode === 'instant' ? '开始即时分析' : mode === 'deep' ? '开始深度复盘' : mode === 'single' ? '开始单人跟拍' : '下一步：检查视频'
 
   function startReview() {
     if (!videoName) {
@@ -63,7 +65,7 @@ export default function MatchNew() {
     })
     const match: Match = {
       id,
-      name: `${date} 球队复盘`,
+      name: mode === 'single' ? `${date} 单人跟拍` : `${date} 球队复盘`,
       date,
       type,
       duration: 15 * 60,
@@ -81,11 +83,13 @@ export default function MatchNew() {
       identificationStatus: 'pending',
       players,
       createdAt: Date.now(),
+      analysisMode: mode === 'single' ? 'single' : undefined,
     }
     saveMatch(match)
     if (selectedFile) cacheVideoFile(id, selectedFile)
     if (mode === 'instant') navigate(`/match/${id}/instant`, { replace: true })
     else if (mode === 'deep') navigate(`/match/${id}/detection`, { replace: true })
+    else if (mode === 'single') navigate(`/match/${id}/tracking`, { replace: true })
     else navigate(`/match/${id}/quality`, { replace: true })
   }
 
@@ -223,7 +227,7 @@ export default function MatchNew() {
             </div>
           </details>
 
-          <p className="mt-4 text-center text-xs text-[var(--text-muted)]">文件只在选择“开始真实检测”后上传；演示复盘不上传视频。</p>
+          <p className="mt-4 text-center text-xs text-[var(--text-muted)]">文件只在选择真实分析后上传；演示复盘不上传视频。</p>
         </section>
       </div>
     </div>

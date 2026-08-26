@@ -98,8 +98,8 @@ export function putWholeVideoToCos(
   })
 }
 
-export function createCloudDetectionJob(uploadId: string, clientMatchId: string): Promise<CloudDetectionJob> {
-  return invoke('POST', '/api/v1/cloud-detection-jobs', { upload_id: uploadId, client_match_id: clientMatchId }, 202)
+export function createCloudDetectionJob(uploadId: string, clientMatchId: string, mode: 'deep' | 'single' = 'deep'): Promise<CloudDetectionJob> {
+  return invoke('POST', '/api/v1/cloud-detection-jobs', { upload_id: uploadId, client_match_id: clientMatchId, mode }, 202)
 }
 
 export function getCloudDetectionJob(jobId: string): Promise<CloudDetectionJob> {

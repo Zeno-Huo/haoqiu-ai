@@ -52,7 +52,7 @@ export class TaskService {
     };
   }
 
-  async confirmUpload(ownerId: string, uploadId: string, clientMatchId?: string): Promise<TaskRecord> {
+  async confirmUpload(ownerId: string, uploadId: string, clientMatchId?: string, mode: "deep" | "single" = "deep"): Promise<TaskRecord> {
     const upload = await this.repo.getUpload(uploadId);
     if (!upload || upload.owner_id !== ownerId) throw new ApiError(404, "UPLOAD_NOT_FOUND", "上传记录不存在");
     if (clientMatchId !== undefined && upload.client_match_id !== clientMatchId) {
@@ -66,7 +66,7 @@ export class TaskService {
     const now = this.now();
     const task: TaskRecord = {
       _id: upload._id, owner_id: ownerId, client_match_id: upload.client_match_id,
-      status: "queued", stage: "queued", progress: 0,
+      mode, status: "queued", stage: "queued", progress: 0,
       input_object_key: upload.input_object_key, output_object_key: upload.output_object_key,
       input: { filename: upload.original_filename, content_type: upload.content_type, size_bytes: metadata.sizeBytes, duration_seconds: upload.duration_seconds },
       raw_lifecycle: { delete_after: addDays(now, this.config.rawRetentionDays) },

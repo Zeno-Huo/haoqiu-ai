@@ -22,7 +22,7 @@ export interface TaskRecord {
   owner_id: string;
   client_match_id?: string;
   /** 分析模式：instant = 即时分析(VLM 视频理解，快)；deep = 深度复盘(GPU 检测，慢) */
-  mode?: "instant" | "deep";
+  mode?: "instant" | "deep" | "single";
   status: TaskStatus;
   stage: string;
   progress: number;

@@ -9,6 +9,7 @@ import Analyzing from './pages/Analyzing'
 import MatchReport from './pages/MatchReport'
 import IdentifyPlayers from './pages/IdentifyPlayers'
 import MyTeam from './pages/MyTeam'
+import SingleTracking from './pages/SingleTracking'
 import NotFound from './pages/NotFound'
 
 export default function App() {
@@ -20,6 +21,7 @@ export default function App() {
         <Route path="/match/:id/quality" element={<VideoQuality />} />
         <Route path="/match/:id/instant" element={<InstantAnalysis />} />
         <Route path="/match/:id/detection" element={<DetectionTask />} />
+        <Route path="/match/:id/tracking" element={<SingleTracking />} />
         <Route path="/team" element={<MyTeam />} />
         <Route path="/match/:id/analyzing" element={<Analyzing />} />
         <Route path="/match/:id/identify" element={<IdentifyPlayers />} />
