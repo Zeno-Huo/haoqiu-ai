@@ -33,3 +33,23 @@ test("invalid or empty VLM text remains raw and has no fake structured result", 
   assert.equal(parseVlmText("").parse_status, "empty");
   assert.equal(parseVlmText("").structured, null);
 });
+
+test("event log derives only witnessed counts and rejects unsupported score", () => {
+  const withoutGoals = parseVlmText(JSON.stringify({
+    match: { score: { home: 1, away: 2 } },
+    events: [{ time_seconds: 5, type: "传球", team: "我方", outcome: "成功" }]
+  }));
+  assert.equal(withoutGoals.structured.match.score.home, null);
+  assert.equal(withoutGoals.structured.match.score.away, null);
+  assert.equal(withoutGoals.structured.teams.home.stats.passes, 1);
+  assert.equal(withoutGoals.structured.teams.home.stats.passes_success, 1);
+
+  const withGoal = parseVlmText(JSON.stringify({
+    events: [{ time_seconds: 8, type: "goal", team: "home", outcome: "成功" }, { time_seconds: 10, type: "shot", team: "home", outcome: "成功" }]
+  }));
+  assert.equal(withGoal.structured.match.score.home, 1);
+  assert.equal(withGoal.structured.match.score.away, 0);
+  assert.equal(withGoal.structured.teams.home.stats.goals, 1);
+  assert.equal(withGoal.structured.teams.home.stats.shots, 1);
+  assert.equal(withGoal.structured.teams.home.stats.shots_on_target, 1);
+});

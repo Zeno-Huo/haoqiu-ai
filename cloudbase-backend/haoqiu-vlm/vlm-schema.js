@@ -78,6 +78,74 @@ function normalizeEvent(value) {
   };
 }
 
+function eventKind(value) {
+  const raw = String(value || "").trim().toLowerCase();
+  if (/goal|进球/.test(raw)) return "goal";
+  if (/pass|传球/.test(raw)) return "pass";
+  if (/shot|射门/.test(raw)) return "shot";
+  if (/touch|拿球|触球/.test(raw)) return "touch";
+  if (/interception|拦截/.test(raw)) return "interception";
+  if (/tackle|抢断/.test(raw)) return "tackle";
+  if (/turnover|失误/.test(raw)) return "turnover";
+  if (/dispossessed|被断/.test(raw)) return "dispossessed";
+  return null;
+}
+
+function eventTeam(value) {
+  const raw = String(value || "").trim().toLowerCase();
+  if (/^(home|我方|主队)$/.test(raw)) return "home";
+  if (/^(away|对方|客队)$/.test(raw)) return "away";
+  return null;
+}
+
+function eventSucceeded(value) {
+  const raw = String(value || "").trim().toLowerCase();
+  if (/failed|fail|失误|失败|被断/.test(raw)) return false;
+  if (/success|successful|成功|完成|进球|射正/.test(raw)) return true;
+  return null;
+}
+
+/** 用模型已列出的事件补足空统计，绝不从自然语言猜数字。 */
+function deriveStatsFromEvents(dashboard) {
+  const events = dashboard.events || [];
+  const byTeam = { home: {}, away: {} };
+  for (const event of events) {
+    const team = eventTeam(event.team);
+    const kind = eventKind(event.type);
+    if (!team || !kind) continue;
+    const stats = byTeam[team];
+    stats[kind] = (stats[kind] || 0) + 1;
+    if (kind === "pass") {
+      const success = eventSucceeded(event.outcome);
+      if (success === true) stats.passes_success = (stats.passes_success || 0) + 1;
+      if (success === false) stats.pass_errors = (stats.pass_errors || 0) + 1;
+    }
+    if (kind === "shot" && eventSucceeded(event.outcome) === true) stats.shots_on_target = (stats.shots_on_target || 0) + 1;
+  }
+  for (const key of ["home", "away"]) {
+    const team = dashboard.teams[key];
+    const derived = byTeam[key];
+    const map = { pass: "passes", shot: "shots", touch: "touches", interception: "interceptions", tackle: "tackles", turnover: "turnovers", dispossessed: "dispossessed", goal: "goals" };
+    for (const [eventKey, statKey] of Object.entries(map)) if (team.stats[statKey] == null && derived[eventKey]) team.stats[statKey] = derived[eventKey];
+    for (const keyName of ["passes_success", "pass_errors", "shots_on_target"]) if (team.stats[keyName] == null && derived[keyName]) team.stats[keyName] = derived[keyName];
+    if (team.shots == null && team.stats.shots != null) team.shots = team.stats.shots;
+    if (team.score == null && team.stats.goals != null) team.score = team.stats.goals;
+  }
+  // score 只接受与明确 goal 事件一致的值；没有 goal 事件不能凭空展示比分。
+  const goals = { home: byTeam.home.goal || 0, away: byTeam.away.goal || 0 };
+  const hasGoal = goals.home + goals.away > 0;
+  if (!hasGoal) {
+    dashboard.match.score.home = null;
+    dashboard.match.score.away = null;
+  } else {
+    for (const key of ["home", "away"]) {
+      if (dashboard.match.score[key] == null) dashboard.match.score[key] = goals[key];
+    }
+  }
+  if (!dashboard.notes.includes("团队数字仅由已列出的视觉事件汇总")) dashboard.notes.push("团队数字仅由已列出的视觉事件汇总");
+  return dashboard;
+}
+
 function normalizeDashboard(value) {
   const input = asObject(value);
   const match = asObject(input.match);
@@ -139,8 +207,8 @@ function parseVlmText(rawContent) {
   }
   const value = asObject(extracted.value);
   // 允许模型直接返回 dashboard，也允许包一层 { dashboard: ... }。
-  const dashboard = normalizeDashboard(value.dashboard || value);
+  const dashboard = deriveStatsFromEvents(normalizeDashboard(value.dashboard || value));
   return { parse_status: "parsed", parse_error: null, structured: dashboard };
 }
 
-module.exports = { parseVlmText, normalizeDashboard, extractJson };
+module.exports = { parseVlmText, normalizeDashboard, extractJson, deriveStatsFromEvents };
