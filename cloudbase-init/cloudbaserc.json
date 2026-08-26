@@ -1,0 +1,21 @@
+{
+  "$schema": "https://static.cloudbase.net/cli/cloudbaserc.schema.json",
+  "envId": "haoqiu-ai-prod-d3g2cm2xn3255c273",
+  "functionRoot": "./",
+  "functions": [
+    {
+      "name": "haoqiu-init",
+      "timeout": 20,
+      "runtime": "Nodejs18.15",
+      "memorySize": 256,
+      "handler": "index.main",
+      "installDependency": true,
+      "envVariables": {
+        "CLOUDBASE_ENV_ID": "haoqiu-ai-prod-d3g2cm2xn3255c273",
+        "COS_BUCKET": "haoqiu-ai-media-1352817304",
+        "COS_REGION": "ap-shanghai",
+        "ALLOWED_WEB_ORIGIN": "https://haoqiu-ai-prod-d3g2cm2xn3255c273-1352817304.tcloudbaseapp.com"
+      }
+    }
+  ]
+}
