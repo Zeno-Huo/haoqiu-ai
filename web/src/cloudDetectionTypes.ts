@@ -1,4 +1,4 @@
-import type { DetectionErrorInfo, DetectionInputInfo, DetectionJobStage, DetectionJobStatus, DetectionModelInfo } from './detectionTypes'
+import type { DetectionDiagnostics, DetectionErrorInfo, DetectionInputInfo, DetectionJobStage, DetectionJobStatus, DetectionModelInfo } from './detectionTypes'
 
 export interface CloudUploadTicketRequest {
   client_match_id: string
@@ -38,6 +38,7 @@ export interface CloudDetectionJob {
   completed_at?: string
   model?: DetectionModelInfo
   input?: DetectionInputInfo
+  diagnostics?: DetectionDiagnostics
   warnings?: string[]
   artifacts?: {
     annotated_video_ready: boolean
