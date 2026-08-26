@@ -44,6 +44,6 @@ export const haiCompletionBody = (taskId: string, body: any, idempotencyKey?: st
     output: result.artifact,
     diagnostics: detection.diagnostics,
     warnings: detection.warnings,
-    model: detection.model
+    model: result.model
   };
 };
