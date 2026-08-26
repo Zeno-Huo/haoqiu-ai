@@ -204,6 +204,7 @@ class PullWorker:
                 "content_type": "video/mp4",
             },
             "detection": state.local_result or {},
+            "model": {"name": "football-player-detection", "version": "YOLOv8"},
         }
         accepted = self._retry(
             lambda: self.task_api.complete(
@@ -223,12 +224,22 @@ class PullWorker:
         while True:
             snapshot = self._retry(lambda: self.local_api.get_job(local_job_id), lease)
             lease.ensure_owned()
+            # The cloud API only accepts stage in {"probing", "detecting", "rendering"}.
+            # The local service also reports "queued"/"completed"/"failed" — map those
+            # to the nearest valid stage so the first/last progress reports are accepted.
+            raw_stage = snapshot.stage or snapshot.status
+            stage = raw_stage if raw_stage in ("probing", "detecting", "rendering") else (
+                "rendering" if raw_stage == "completed" else "probing"
+            )
+            # Cloud API requires progress in [0, 99]; the local service reports 100
+            # on completion — clamp it (the complete call marks 100 server-side).
+            progress = max(0, min(99, int(snapshot.progress or 0)))
             reported = self._retry(
                 lambda: self.task_api.report_progress(
                     task.task_id,
                     task.lease_token,
-                    snapshot.stage or snapshot.status,
-                    snapshot.progress,
+                    stage,
+                    progress,
                     snapshot.eta_seconds,
                 ),
                 lease,

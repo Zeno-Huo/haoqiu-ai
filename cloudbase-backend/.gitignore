@@ -1,5 +1,7 @@
 node_modules/
-dist/
 .env
 .env.*
 !.env.example
+# 可能包含密钥(VLM_API_KEY 等)，禁止提交
+cloudbaserc.json
+# dist/ 必须随函数一起上传（handler 指向编译产物），不在 ignore 之列

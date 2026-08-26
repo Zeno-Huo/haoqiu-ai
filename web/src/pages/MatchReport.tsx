@@ -2,8 +2,9 @@ import { useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { buildMatchSummary } from '../lib/engine'
 import { deleteMatch, getMatch } from '../lib/storage'
+import { classLabel } from '../lib/detectionStats'
 import { formatDate, formatDuration } from '../lib/utils'
-import type { Match, MatchSummary, Player, PlayerAnalysis, PlayerStats } from '../types'
+import type { DetectionStats, Match, MatchSummary, Player, PlayerAnalysis, PlayerStats } from '../types'
 
 function Comparison({ label, home, away, suffix = '' }: { label: string; home: number; away: number; suffix?: string }) {
   const total = Math.max(1, home + away)
@@ -22,6 +23,31 @@ function TeamStats({ analyses }: { analyses: PlayerAnalysis[] }) {
   const passErrors = analyses.reduce((sum, item) => sum + Math.max(0, item.stats.passes - item.stats.passesSuccess), 0)
   const allErrors = total('turnovers') + total('dispossessed') + passErrors
   return <section className="mt-10"><h2 className="section-title mb-3">全队数据</h2><div className="team-stats"><div className="team-stat"><b>{total('touches')}</b><span>总拿球</span></div><div className="team-stat"><b>{total('passes')}</b><span>总传球</span></div><div className="team-stat"><b>{total('shots')}</b><span>总射门</span></div><div className="team-stat"><b>{allErrors}</b><span>总失误</span></div></div></section>
+}
+
+function DetectionOverview({ stats }: { stats: DetectionStats }) {
+  return (
+    <section className="mt-8 panel p-5">
+      <p className="section-title mb-1">真实检测概览 · GPU 逐帧目标检测</p>
+      <p className="text-xs leading-5 text-[var(--text-muted)]">以下由本次深度复盘模型真实检测得出，非演示数据。比分、控球率、个人拿球 / 传球 / 射门仍为演示数据，需球员追踪后接入。</p>
+      <div className="mt-3 grid grid-cols-2 gap-4 sm:grid-cols-4">
+        <div><b className="font-score text-xl text-[var(--ai)]">{stats.playerPresenceRate}%</b><span className="mt-1 block text-xs text-[var(--text-muted)]">球员在场帧占比</span></div>
+        <div><b className="font-score text-xl text-[var(--ai)]">{stats.ballPresenceRate}%</b><span className="mt-1 block text-xs text-[var(--text-muted)]">球出现帧占比</span></div>
+        <div><b className="font-score text-xl text-[var(--ai)]">{stats.processedFrames}</b><span className="mt-1 block text-xs text-[var(--text-muted)]">已处理帧数</span></div>
+        <div><b className="font-score text-xl text-[var(--ai)]">{stats.sourceFrames}</b><span className="mt-1 block text-xs text-[var(--text-muted)]">视频总帧数</span></div>
+      </div>
+      <div className="mt-4 flex flex-wrap gap-2">
+        {Object.entries(stats.frameDetectionsByClass).map(([cls, count]) => (
+          <span key={cls} className="rounded-full border border-[var(--line)] px-3 py-1 text-xs text-[var(--text-secondary)]">{classLabel(cls)} 检测 {count} 帧</span>
+        ))}
+      </div>
+      {(stats.modelName || stats.resolution || stats.durationSeconds) && (
+        <p className="mt-3 text-xs text-[var(--text-muted)]">
+          模型：{stats.modelName ?? '未返回'}{stats.modelVersion ? ' · ' + stats.modelVersion : ''}{stats.resolution ? ' · ' + stats.resolution : ''}{stats.durationSeconds ? ' · ' + Math.round(stats.durationSeconds) + 's' : ''}{stats.fps ? ' · ' + stats.fps + ' fps' : ''}
+        </p>
+      )}
+    </section>
+  )
 }
 
 function toTime(total: number) { const min = Math.floor(total / 60); const sec = total % 60; return `${String(min).padStart(2, '0')}:${String(sec).padStart(2, '0')}` }
@@ -73,5 +99,5 @@ export default function MatchReport() {
   if (!match) return <div className="page-shell px-4 py-24 text-center"><p className="text-[var(--text-secondary)]">未找到该比赛</p><Link to="/" className="btn-primary mt-6">返回首页</Link></div>
   if (!match.analysis) { navigate(`/match/${match.id}/analyzing`, { replace: true }); return null }
   const analyses = match.analysis; const homeShots = analyses.reduce((sum, a) => sum + a.stats.shots, 0); const teamAvg = analyses.length ? analyses.reduce((sum, a) => sum + a.score, 0) / analyses.length : 0; const summary = buildMatchSummary(match, analyses); const playerMap = new Map(match.players.map((player) => [player.id, player])); const rows = analyses.map((analysis) => ({ analysis, player: playerMap.get(analysis.playerId) })).filter((row): row is { analysis: PlayerAnalysis; player: Player } => Boolean(row.player)).sort((a, b) => b.analysis.score - a.analysis.score)
-  return <div className="report-page"><div className="report-shell"><header className="flex items-center justify-between gap-4"><div><Link to="/" className="text-sm text-[var(--text-muted)] hover:text-[var(--ai)]">← 首页</Link><p className="report-meta mt-2">{formatDate(match.date)} · {match.name} · {match.type} · {formatDuration(match.duration)}</p></div><button className="btn-secondary shrink-0" onClick={() => setShareOpen(true)} aria-label="打开球队复盘分享预览">分享球队复盘</button></header><section className="score-hero"><div className="grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_auto_auto_auto_minmax(0,1fr)] items-center gap-3 sm:gap-4"><span className="score-team home">{match.teamName}</span><span className="score-number home">{match.myScore}</span><span className="score-dash">—</span><span className="score-number away">{match.oppScore}</span><span className="score-team away">{match.opponentName}</span></div><aside className="team-average col-span-full sm:col-auto"><span>球队平均分</span><b>{teamAvg.toFixed(1)}</b></aside></section><div className="report-divider" /><div className="comparison-grid mt-3"><Comparison label="控球率" home={match.possessionHome ?? 50} away={match.possessionAway ?? 50} suffix="%" /><Comparison label="射门" home={homeShots} away={match.shotsAway ?? 0} /></div><Summary summary={summary} /><IdentityNotice match={match} /><p className="mt-4 text-xs text-[var(--text-muted)]">演示数据：本地模拟分析结果，不代表真实 AI 识别。</p><TeamStats analyses={analyses} /><section className="mt-10"><h2 className="section-title mb-3">球员表现</h2><div className="player-grid">{rows.map(({ player, analysis }) => <PlayerCard key={player.id} player={player} analysis={analysis} />)}</div></section><div className="mt-8 flex justify-end gap-2"><Link className="btn-secondary" to={`/match/${match.id}/analyzing`}>重新分析</Link><button className="btn-secondary !border-[var(--danger)] !text-[var(--danger)]" onClick={() => { if (window.confirm('确定删除这场比赛及其看板吗？')) { deleteMatch(match.id); navigate('/', { replace: true }) } }}>删除</button></div></div>{shareOpen && <ShareModal match={match} homeShots={homeShots} summary={summary} onClose={() => setShareOpen(false)} />}</div>
+  return <div className="report-page"><div className="report-shell"><header className="flex items-center justify-between gap-4"><div><Link to="/" className="text-sm text-[var(--text-muted)] hover:text-[var(--ai)]">← 首页</Link><p className="report-meta mt-2">{formatDate(match.date)} · {match.name} · {match.type} · {formatDuration(match.duration)}</p></div><button className="btn-secondary shrink-0" onClick={() => setShareOpen(true)} aria-label="打开球队复盘分享预览">分享球队复盘</button></header><section className="score-hero"><div className="grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_auto_auto_auto_minmax(0,1fr)] items-center gap-3 sm:gap-4"><span className="score-team home">{match.teamName}</span><span className="score-number home">{match.myScore}</span><span className="score-dash">—</span><span className="score-number away">{match.oppScore}</span><span className="score-team away">{match.opponentName}</span></div><aside className="team-average col-span-full sm:col-auto"><span>球队平均分</span><b>{teamAvg.toFixed(1)}</b></aside></section><div className="report-divider" /><div className="comparison-grid mt-3"><Comparison label="控球率" home={match.possessionHome ?? 50} away={match.possessionAway ?? 50} suffix="%" /><Comparison label="射门" home={homeShots} away={match.shotsAway ?? 0} /></div><Summary summary={summary} /><IdentityNotice match={match} /><p className="mt-4 text-xs text-[var(--text-muted)]">演示数据：本地模拟分析结果，不代表真实 AI 识别。</p>{match.detectionStats && <DetectionOverview stats={match.detectionStats} />}<TeamStats analyses={analyses} /><section className="mt-10"><h2 className="section-title mb-3">球员表现</h2><div className="player-grid">{rows.map(({ player, analysis }) => <PlayerCard key={player.id} player={player} analysis={analysis} />)}</div></section><div className="mt-8 flex justify-end gap-2"><Link className="btn-secondary" to={`/match/${match.id}/analyzing`}>重新分析</Link><button className="btn-secondary !border-[var(--danger)] !text-[var(--danger)]" onClick={() => { if (window.confirm('确定删除这场比赛及其看板吗？')) { deleteMatch(match.id); navigate('/', { replace: true }) } }}>删除</button></div></div>{shareOpen && <ShareModal match={match} homeShots={homeShots} summary={summary} onClose={() => setShareOpen(false)} />}</div>
 }

@@ -9,6 +9,22 @@ export interface ObjectStore {
   head(key: string): Promise<ObjectMetadata>;
 }
 
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:?\d{2})?$/;
+/** 递归把 ISO 字符串还原为 Date，用于 JSON.parse 后的对象。 */
+export function reviveDates(value: unknown): unknown {
+  if (typeof value === "string" && ISO_DATE_RE.test(value)) {
+    const d = new Date(value);
+    return Number.isNaN(d.getTime()) ? value : d;
+  }
+  if (Array.isArray(value)) return value.map(reviveDates);
+  if (value && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const k of Object.keys(value as Record<string, unknown>)) out[k] = reviveDates((value as Record<string, unknown>)[k]);
+    return out;
+  }
+  return value;
+}
+
 export class TencentCosStore implements ObjectStore {
   private client: COS;
   constructor(private bucket: string, private region: string) {
@@ -29,5 +45,70 @@ export class TencentCosStore implements ObjectStore {
       if (error) return reject(new ApiError(409, "UPLOAD_NOT_FOUND", "尚未发现完整上传对象"));
       resolve({ sizeBytes: Number(data.headers?.["content-length"] || 0), etag: String(data.ETag || data.headers?.etag || "").replaceAll('"', "") });
     }));
+  }
+
+  /** 直接读 COS 对象为 JSON（后端内部存储用，不走签名 URL）。自动还原 ISO 日期字符串。 */
+  async getJson<T = unknown>(key: string): Promise<{ data: T; etag: string } | null> {
+    return new Promise((resolve, reject) => this.client.getObject(
+      { Bucket: this.bucket, Region: this.region, Key: key },
+      (error, data) => {
+        if (error) {
+          const status = Number((error as { statusCode?: number })?.statusCode ?? 0);
+          if (status === 404 || (error as { code?: string })?.code === "NoSuchKey") return resolve(null);
+          return reject(error);
+        }
+        const body = data?.Body;
+        if (!body) return resolve(null);
+        try {
+          const text = Buffer.isBuffer(body) ? body.toString("utf8") : String(body);
+          const etag = String(data?.ETag || data?.headers?.etag || "").replaceAll('"', "");
+          resolve({ data: reviveDates(JSON.parse(text)) as T, etag });
+        } catch (e) { reject(e); }
+      }
+    ));
+  }
+
+  /** 直接写 JSON 到 COS（后端内部存储用）。返回新对象的 ETag。 */
+  async putJson(key: string, value: unknown): Promise<{ etag: string }> {
+    return new Promise((resolve, reject) => this.client.putObject(
+      {
+        Bucket: this.bucket, Region: this.region, Key: key,
+        Body: JSON.stringify(value), ContentType: "application/json"
+      },
+      (error, data) => {
+        if (error) return reject(error);
+        const etag = String(data?.ETag || "").replaceAll('"', "");
+        resolve({ etag });
+      }
+    ));
+  }
+
+  /** 按前缀列出对象 Key（分页循环到完）。 */
+  async listKeys(prefix: string, max = 1000): Promise<string[]> {
+    const keys: string[] = [];
+    let marker: string | undefined;
+    for (;;) {
+      const page = await new Promise<{ contents: Array<{ key: string }>; isTruncated: boolean; nextMarker?: string }>((resolve, reject) => this.client.getBucket(
+        { Bucket: this.bucket, Region: this.region, Prefix: prefix, Marker: marker, MaxKeys: Math.min(max, 1000) },
+        (error, data) => error ? reject(error) : resolve({
+          contents: (data?.Contents || []).map((c: { Key: string }) => ({ key: c.Key })),
+          isTruncated: Boolean(data?.IsTruncated),
+          nextMarker: data?.NextMarker as string | undefined
+        })
+      ));
+      for (const c of page.contents) keys.push(c.key);
+      if (!page.isTruncated || keys.length >= max) break;
+      marker = page.nextMarker ?? page.contents[page.contents.length - 1]?.key;
+      if (!marker) break;
+    }
+    return keys;
+  }
+
+  /** 删除对象。 */
+  async deleteObject(key: string): Promise<void> {
+    return new Promise((resolve, reject) => this.client.deleteObject(
+      { Bucket: this.bucket, Region: this.region, Key: key },
+      (error) => error ? reject(error) : resolve()
+    ));
   }
 }

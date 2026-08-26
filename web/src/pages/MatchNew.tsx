@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { createRng } from '../lib/seed'
 import { getTeamProfile, newId, saveMatch } from '../lib/storage'
 import { todayStr } from '../lib/utils'
@@ -15,6 +15,8 @@ function clampScore(raw: string): number {
 
 export default function MatchNew() {
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
+  const mode = searchParams.get('mode')
   const inputRef = useRef<HTMLInputElement>(null)
   const probeTokenRef = useRef(0)
   const team = getTeamProfile()
@@ -30,6 +32,13 @@ export default function MatchNew() {
   const [error, setError] = useState('')
 
   const canStart = Boolean(videoName && videoProbeState === 'ready')
+  const modeTitle = mode === 'instant' ? '上传比赛视频，开始即时分析' : mode === 'deep' ? '上传比赛视频，开始深度复盘' : '上传比赛视频'
+  const modeHint = mode === 'instant'
+    ? '选择一段球队视频，上传后由视觉大模型快速给出文字判断。'
+    : mode === 'deep'
+    ? '选择一段球队视频，上传后由 GPU 做逐帧检测并生成标注视频。'
+    : '选择一段球队视频，先检查画面信息；下一步可选择真实检测或独立的球队复盘 Demo。'
+  const startLabel = mode === 'instant' ? '开始即时分析' : mode === 'deep' ? '开始深度复盘' : '下一步：检查视频'
 
   function startReview() {
     if (!videoName) {
@@ -75,16 +84,18 @@ export default function MatchNew() {
     }
     saveMatch(match)
     if (selectedFile) cacheVideoFile(id, selectedFile)
-    navigate(`/match/${id}/quality`, { replace: true })
+    if (mode === 'instant') navigate(`/match/${id}/instant`, { replace: true })
+    else if (mode === 'deep') navigate(`/match/${id}/detection`, { replace: true })
+    else navigate(`/match/${id}/quality`, { replace: true })
   }
 
   return (
     <div className="page-shell px-4 py-10">
       <div className="mx-auto max-w-3xl">
         <header className="mb-7">
-          <h1 className="text-3xl font-semibold text-[var(--text-primary)]">上传比赛视频</h1>
+          <h1 className="text-3xl font-semibold text-[var(--text-primary)]">{modeTitle}</h1>
           <p className="mt-2 max-w-2xl text-sm leading-6 text-[var(--text-muted)]">
-            选择一段球队视频，先检查画面信息；下一步可选择真实检测或独立的球队复盘 Demo。
+            {modeHint}
           </p>
         </header>
 
@@ -180,7 +191,7 @@ export default function MatchNew() {
           {error && <p className="mt-5 text-sm text-[var(--danger)]">{error}</p>}
           <div className="mt-6">
             <button className="btn-primary w-full justify-center" type="button" disabled={!canStart} onClick={startReview}>
-              {videoProbeState === 'probing' ? '正在读取视频信息…' : '下一步：检查视频'} {videoProbeState !== 'probing' && <span aria-hidden>→</span>}
+              {videoProbeState === 'probing' ? '正在读取视频信息…' : startLabel} {videoProbeState !== 'probing' && <span aria-hidden>→</span>}
             </button>
           </div>
 

@@ -7,23 +7,14 @@ import {
   getCloudDetectionJob,
   getSignedDetectionVideo,
   isCloudDetectionConfigured,
-  putWholeVideoToCos,
-  requestCloudUploadTicket,
 } from '../lib/cloudDetectionApi'
 import { getMatch, saveMatch } from '../lib/storage'
-import { clearCachedVideoFile, getCachedVideoFile } from '../lib/videoFileCache'
+import { buildDetectionStats, classLabel } from '../lib/detectionStats'
+import { getCachedVideoFile } from '../lib/videoFileCache'
+import { ensureUploadedVideo, UPLOAD_PHASE_LABELS } from '../lib/cloudUploadWorkflow'
+import type { UploadPhase } from '../lib/cloudUploadWorkflow'
 
-type WorkflowPhase = 'ticket' | 'uploading' | 'creating'
-type WorkflowListener = (phase: WorkflowPhase, progress: number) => void
-
-interface InflightWorkflow {
-  promise: Promise<CloudDetectionJob>
-  listeners: Set<WorkflowListener>
-  phase: WorkflowPhase
-  progress: number
-}
-
-const workflowsByMatch = new Map<string, InflightWorkflow>()
+type WorkflowPhase = UploadPhase
 
 function safeJobSnapshot(job: CloudDetectionJob): CloudDetectionJob {
   return {
@@ -32,60 +23,17 @@ function safeJobSnapshot(job: CloudDetectionJob): CloudDetectionJob {
   }
 }
 
-function ensureCloudWorkflow(matchId: string, file: File | undefined, listener: WorkflowListener): Promise<CloudDetectionJob> {
-  const existing = workflowsByMatch.get(matchId)
-  if (existing) {
-    existing.listeners.add(listener)
-    listener(existing.phase, existing.progress)
-    return existing.promise
-  }
-
-  const state: InflightWorkflow = {
-    promise: Promise.resolve(undefined as unknown as CloudDetectionJob),
-    listeners: new Set([listener]),
-    phase: 'ticket',
-    progress: 0,
-  }
-  const report = (phase: WorkflowPhase, progress: number) => {
-    state.phase = phase
-    state.progress = progress
-    for (const notify of state.listeners) notify(phase, progress)
-  }
-
-  state.promise = (async () => {
-    const latest = getMatch(matchId)
-    if (!latest) throw new Error('找不到这段视频记录')
-    let uploadId = latest.cloudUploadId
-
-    if (!uploadId) {
-      if (!file) throw new Error('本地视频文件已在刷新后丢失。云端上传尚未完成，请重新选择视频。')
-      const durationSeconds = latest.videoMeta?.durationSeconds
-      if (!durationSeconds || !Number.isFinite(durationSeconds)) throw new Error('未读取到视频时长，请重新选择视频。')
-      report('ticket', 0)
-      const ticket = await requestCloudUploadTicket({
-        client_match_id: matchId,
-        filename: file.name,
-        content_type: file.type || (file.name.toLowerCase().endsWith('.mov') ? 'video/quicktime' : 'video/mp4'),
-        size_bytes: file.size,
-        duration_seconds: durationSeconds,
-      })
-      report('uploading', 0)
-      await putWholeVideoToCos(file, ticket, (progress) => report('uploading', progress))
-      uploadId = ticket.upload_id
-      const afterUpload = getMatch(matchId) ?? latest
-      saveMatch({ ...afterUpload, cloudUploadId: uploadId })
-      clearCachedVideoFile(matchId)
-    }
-
-    report('creating', 100)
-    const job = await createCloudDetectionJob(uploadId, matchId)
-    const afterCreate = getMatch(matchId) ?? latest
-    saveMatch({ ...afterCreate, cloudUploadId: uploadId, cloudJobId: job.job_id, cloudDetectionJob: safeJobSnapshot(job) })
-    return job
-  })().finally(() => workflowsByMatch.delete(matchId))
-
-  workflowsByMatch.set(matchId, state)
-  return state.promise
+/** 深度复盘：整段视频直传 COS 后创建 GPU 检测任务。 */
+async function ensureCloudWorkflow(
+  matchId: string,
+  file: File | undefined,
+  listener: (phase: WorkflowPhase, progress: number) => void,
+): Promise<CloudDetectionJob> {
+  const uploadId = await ensureUploadedVideo(matchId, file, listener)
+  const job = await createCloudDetectionJob(uploadId, matchId)
+  const latest = getMatch(matchId)
+  if (latest) saveMatch({ ...latest, cloudUploadId: uploadId, cloudJobId: job.job_id, cloudDetectionJob: safeJobSnapshot(job), detectionStats: buildDetectionStats(job) })
+  return job
 }
 
 const STAGE_LABELS: Record<DetectionJobStage, string> = {
@@ -93,15 +41,11 @@ const STAGE_LABELS: Record<DetectionJobStage, string> = {
   probing: '读取完整视频信息',
   detecting: '正在检测画面中的球员候选',
   rendering: '正在生成检测视频',
-  completed: '真实检测任务已完成',
-  failed: '真实检测任务失败',
+  completed: '深度复盘已完成',
+  failed: '深度复盘失败',
 }
 
-const WORKFLOW_LABELS: Record<WorkflowPhase, string> = {
-  ticket: '正在取得安全上传信息',
-  uploading: '正在上传完整视频',
-  creating: '正在创建云检测任务',
-}
+const WORKFLOW_LABELS: Record<WorkflowPhase, string> = UPLOAD_PHASE_LABELS
 
 function inputDuration(seconds: number): string {
   const minutes = Math.floor(seconds / 60)
@@ -168,7 +112,7 @@ export default function DetectionTask() {
             setJob(current)
             setMessage('')
             const currentMatch = getMatch(match.id) ?? match
-            saveMatch({ ...currentMatch, cloudJobId: current.job_id, cloudDetectionJob: safeJobSnapshot(current) })
+            saveMatch({ ...currentMatch, cloudJobId: current.job_id, cloudDetectionJob: safeJobSnapshot(current), detectionStats: buildDetectionStats(current) })
             if (current.status === 'succeeded') {
               if (current.artifacts?.annotated_video_ready) await loadResult(current.job_id)
               return
@@ -200,6 +144,7 @@ export default function DetectionTask() {
   const persistedMatch = getMatch(initialMatch.id) ?? initialMatch
   const terminalFailure = job?.status === 'failed'
   const success = job?.status === 'succeeded'
+  const detectionStats = job ? buildDetectionStats(job) : undefined
   const progress = job ? Math.min(100, Math.max(0, job.progress)) : uploadProgress
   const stageLabel = job
     ? (job.stage ? STAGE_LABELS[job.stage] : job.status === 'queued' ? STAGE_LABELS.queued : '云检测任务处理中')
@@ -228,15 +173,15 @@ export default function DetectionTask() {
     <div className="page-shell px-4 py-10">
       <div className="mx-auto max-w-3xl">
         <header className="mb-7">
-          <p className="eyebrow">真实检测任务</p>
-          <h1 className="mt-2 text-3xl font-semibold text-[var(--text-primary)]">{success ? '真实检测任务已完成' : terminalFailure ? '真实检测任务失败' : '正在检测画面中的球员候选'}</h1>
-          <p className="mt-2 text-sm leading-6 text-[var(--text-muted)]">完整视频直传私有存储；此处不生成比分、控球率、传球、抢断或球员身份。</p>
+          <p className="eyebrow">深度复盘 · GPU 逐帧检测</p>
+          <h1 className="mt-2 text-3xl font-semibold text-[var(--text-primary)]">{success ? '深度复盘已完成' : terminalFailure ? '深度复盘失败' : '正在检测画面中的球员候选'}</h1>
+          <p className="mt-2 text-sm leading-6 text-[var(--text-muted)]">分析时间较长，仅适用赛后复盘以及球员成长。完整视频直传私有存储；此处不生成比分、控球率、传球、抢断或球员身份。</p>
         </header>
 
         {!configured ? (
           <section className="panel p-6">
-            <h2 className="text-lg font-semibold text-[var(--text-primary)]">未配置 CloudBase API</h2>
-            <p className="mt-2 text-sm leading-6 text-[var(--text-muted)]">请配置 VITE_CLOUDBASE_API_BASE 后重新启动网页。前端不会保存 COS 密钥或长期令牌。</p>
+            <h2 className="text-lg font-semibold text-[var(--text-primary)]">未配置云端分析服务</h2>
+            <p className="mt-2 text-sm leading-6 text-[var(--text-muted)]">当前网页未指向可用的 CloudBase 云函数。前端不会保存 COS 密钥或长期令牌。</p>
             <div className="mt-6 flex flex-wrap gap-3"><Link className="btn-secondary" to={'/match/' + initialMatch.id + '/quality'}>返回画面检查</Link><button className="btn-primary" onClick={() => navigate('/match/' + initialMatch.id + '/analyzing')}>查看球队复盘 Demo</button></div>
           </section>
         ) : (
@@ -282,6 +227,21 @@ export default function DetectionTask() {
                 </dl>
 
                 {job.warnings && job.warnings.length > 0 && <div className="rounded-md border border-[var(--attack)] bg-[var(--content)] p-4"><p className="text-sm font-medium text-[var(--attack)]">检测警告</p><ul className="mt-2 space-y-1 text-sm leading-6 text-[var(--text-secondary)]">{job.warnings.map((warning) => <li key={warning}>· {warning}</li>)}</ul></div>}
+
+                {detectionStats && (
+                  <section className="rounded-md border border-[var(--ai)] bg-[var(--content)] p-4">
+                    <p className="text-sm font-semibold text-[var(--text-primary)]">真实检测概览 · GPU 逐帧目标检测</p>
+                    <p className="mt-1 text-xs leading-5 text-[var(--text-muted)]">以下数据由本次模型逐帧检测真实得出，非演示数据。球员个人拿球 / 传球 / 射门统计需球员追踪，待接入。</p>
+                    <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 text-sm sm:grid-cols-3">
+                      <div><dt className="text-xs text-[var(--text-muted)]">球员在场帧占比</dt><dd className="mt-1 font-score text-[var(--ai)]">{detectionStats.playerPresenceRate}%</dd></div>
+                      <div><dt className="text-xs text-[var(--text-muted)]">球出现帧占比</dt><dd className="mt-1 font-score text-[var(--ai)]">{detectionStats.ballPresenceRate}%</dd></div>
+                      <div><dt className="text-xs text-[var(--text-muted)]">已处理帧 / 总帧</dt><dd className="mt-1 font-score text-[var(--ai)]">{detectionStats.processedFrames} / {detectionStats.sourceFrames}</dd></div>
+                      {Object.entries(detectionStats.frameDetectionsByClass).map(([cls, count]) => (
+                        <div key={cls}><dt className="text-xs text-[var(--text-muted)]">{classLabel(cls)} 检测帧数</dt><dd className="mt-1 font-score text-[var(--text-primary)]">{count}</dd></div>
+                      ))}
+                    </dl>
+                  </section>
+                )}
 
                 <div>
                   <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="text-base font-semibold text-[var(--text-primary)]">查看检测视频</h2><button className="text-sm text-[var(--ai)] hover:underline" type="button" onClick={() => void refreshResultUrl()}>刷新播放地址</button></div>

@@ -3,7 +3,7 @@ import { ApiError } from "./types";
 export const DEFAULT_WEB_ORIGIN = "https://haoqiu-ai-prod-d3g2cm2xn3255c273-1352817304.tcloudbaseapp.com";
 
 export const parseAllowedWebOrigins = (raw?: string): string[] => {
-  const values = (raw?.trim() ? raw : DEFAULT_WEB_ORIGIN).split(",").map((value) => value.trim()).filter(Boolean);
+  const values = (raw?.trim() ? raw : DEFAULT_WEB_ORIGIN).split(/[,;]/).map((value) => value.trim()).filter(Boolean);
   const unique = new Set<string>();
   for (const value of values) {
     if (value === "*") throw new Error("ALLOWED_WEB_ORIGINS must not contain a wildcard");

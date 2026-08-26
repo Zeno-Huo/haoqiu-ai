@@ -34,20 +34,31 @@ export default function Home() {
   return (
     <div className="page-shell">
       <section className="home-hero">
-        <div className="mx-auto max-w-5xl px-4 py-20 sm:py-28">
+        <div className="mx-auto max-w-5xl px-4 py-10 sm:py-12">
           <div className="max-w-2xl animate-in">
-            <h1 className="text-4xl font-semibold leading-tight tracking-tight text-[var(--text-primary)] sm:text-6xl">上传一段视频，马上复盘这节球。</h1>
-            <p className="mt-5 max-w-xl text-base leading-7 text-[var(--text-secondary)] sm:text-lg">先进入本地演示复盘，查看比分、控球、射门和全队表现；球员信息可由队长后续补充。</p>
-            <div className="mt-8 flex flex-wrap items-center gap-3">
-              <Link to="/match/new" className="btn-primary">上传视频，马上复盘 <span aria-hidden>→</span></Link>
-              <Link to="/team" className="btn-secondary">管理我的球队</Link>
-            </div>
-            <p className="mt-3 text-xs text-[var(--text-muted)]">本地演示：浏览器只读取本地文件信息，演示数据与真实分析待接入会持续区分显示。</p>
+            <h1 className="text-3xl font-semibold leading-tight tracking-tight text-[var(--text-primary)] sm:text-5xl">上传视频，马上分析</h1>
           </div>
         </div>
       </section>
 
-      <section className="mx-auto max-w-5xl px-4 py-14">
+      <section className="mx-auto max-w-5xl px-4 py-10">
+        <section className="mb-12">
+          <div className="grid gap-4 sm:grid-cols-2">
+            <article className="panel border-[var(--ai)] p-6">
+              <span className="font-score text-2xl font-bold text-[var(--ai)]">01</span>
+              <h3 className="mt-2 text-xl font-semibold text-[var(--ai)]">即时分析</h3>
+              <p className="mt-2 text-sm leading-6 text-[var(--text-muted)]">快速统计比赛数据，辅助教练在比赛中决策。</p>
+              <Link to="/match/new?mode=instant" className="btn-primary mt-5 w-full justify-center">开始即时分析 <span aria-hidden>→</span></Link>
+            </article>
+            <article className="panel border-[var(--ai)] p-6">
+              <span className="font-score text-2xl font-bold text-[var(--ai)]">02</span>
+              <h3 className="mt-2 text-xl font-semibold text-[var(--ai)]">深度复盘</h3>
+              <p className="mt-2 text-sm leading-6 text-[var(--text-muted)]">分析时间较长，仅适用赛后复盘以及球员成长。</p>
+              <Link to="/match/new?mode=deep" className="btn-secondary mt-5 w-full justify-center">开始深度复盘 <span aria-hidden>→</span></Link>
+            </article>
+          </div>
+        </section>
+
         <section className="panel mb-10 p-5 sm:flex sm:items-center sm:justify-between sm:gap-6 sm:p-6">
           <div>
             <p className="field-label !mb-2">我的球队</p>

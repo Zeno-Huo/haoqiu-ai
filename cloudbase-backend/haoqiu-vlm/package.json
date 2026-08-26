@@ -1,0 +1,13 @@
+{
+  "name": "haoqiu-vlm",
+  "version": "1.0.0",
+  "private": true,
+  "description": "即时分析 VLM 云函数：COS JSON 存储 + 通义千问视频理解生成文字事件总结",
+  "main": "index.js",
+  "dependencies": {
+    "cos-nodejs-sdk-v5": "^2.15.4"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

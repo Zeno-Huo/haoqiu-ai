@@ -3,6 +3,7 @@ import type { TaskRecord } from "./types";
 export const publicTask = (task: TaskRecord) => ({
   job_id: task._id,
   client_match_id: task.client_match_id,
+  mode: task.mode,
   status: ["leased", "retry_wait"].includes(task.status) ? "queued" : task.status,
   progress: task.progress,
   stage: task.stage,
@@ -11,6 +12,7 @@ export const publicTask = (task: TaskRecord) => ({
   diagnostics: task.diagnostics,
   warnings: task.warnings,
   error: task.error,
+  text_result: task.text_result,
   artifacts: { annotated_video_ready: task.status === "succeeded" && Boolean(task.output) },
   created_at: task.created_at,
   started_at: task.started_at,
@@ -42,6 +44,6 @@ export const haiCompletionBody = (taskId: string, body: any, idempotencyKey?: st
     output: result.artifact,
     diagnostics: detection.diagnostics,
     warnings: detection.warnings,
-    model: detection.model
+    model: result.model
   };
 };

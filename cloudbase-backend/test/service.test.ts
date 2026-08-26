@@ -55,13 +55,21 @@ class MemoryRepository implements TaskRepository {
     const task = this.lease(id, token, now); const retry = retryable && task.attempt < task.max_attempts;
     Object.assign(task, { status: retry ? "retry_wait" : "failed", error, available_at: now, updated_at: now }); return task;
   }
+  async createInstantTask(task: TaskRecord) { this.tasks.set(task._id, task); return task; }
+  async saveInstantResult(id: string, patch: Partial<TaskRecord>, now: Date) {
+    const task = this.tasks.get(id); if (!task) throw new ApiError(404, "TASK_NOT_FOUND", "missing");
+    Object.assign(task, patch, { updated_at: now });
+    if (patch.status === "succeeded" && !task.completed_at) task.completed_at = now;
+    return task;
+  }
 }
 
 const config: Config = {
   envId: "test", bucket: "haoqiu-ai-media-1352817304", region: "ap-shanghai",
   uploadUrlSeconds: 600, pendingUploadSeconds: 86400, resultUrlSeconds: 600, workerUrlSeconds: 14400, rawRetentionDays: 7, resultRetentionDays: 30,
   maxUploadBytes: 300 * 1024 * 1024, maxDurationSeconds: 900, maxLeaseSeconds: 120,
-  workerToken: "worker-secret", allowTestIdentity: true, allowedWebOrigins: [DEFAULT_WEB_ORIGIN]
+  workerToken: "worker-secret", allowTestIdentity: true, allowedWebOrigins: [DEFAULT_WEB_ORIGIN],
+  vlmProvider: "qwen", vlmModel: "qwen-vl-plus"
 };
 
 test("CORS only reflects exact configured origins and never wildcard", () => {

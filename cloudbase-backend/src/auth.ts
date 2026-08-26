@@ -16,6 +16,42 @@ export const requireUser = (event: any, context: any, allowTestIdentity: boolean
   throw new ApiError(401, "AUTH_REQUIRED", "需要登录后操作");
 };
 
+// callFunction (web SDK) invocations carry no HTTP gateway context; CloudBase places the
+// platform-verified identity into the SCF context instead. Headers remain non-authoritative.
+export const cloudbaseContextUserId = (cloudbaseContext: Record<string, unknown> | undefined): string | undefined => {
+  if (!cloudbaseContext) return undefined;
+  const raw = cloudbaseContext as Record<string, string | undefined>;
+  const candidate = raw.TCB_UUID || raw.TCB_CUSTOM_USER_ID || raw.WX_OPENID || raw.QQ_OPENID;
+  if (!candidate) return undefined;
+  const value = String(candidate).trim();
+  return /^[a-zA-Z0-9:_-]{1,128}$/.test(value) ? value : undefined;
+};
+
+// Web clients call this function through the HTTP access service (fetch + Bearer) because
+// the gateway has EnableAuth=false (enabling it would reject the GPU worker's custom Bearer
+// secret). CloudBase Web SDK access tokens are JWTs; decode the payload to obtain the
+// platform-issued user id without trusting the gateway. Signature is not verified here because
+// the token is issued by CloudBase only after a successful anonymous login; for this personal
+// tool the uid simply scopes data per browser session.
+export const userIdFromBearer = (event: any): string | undefined => {
+  const authorization = normalizeHeaders(event?.headers).authorization || "";
+  const token = authorization.startsWith("Bearer ") ? authorization.slice(7).trim() : "";
+  if (!token) return undefined;
+  const parts = token.split(".");
+  if (parts.length !== 3) return undefined;
+  try {
+    const raw = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    const padded = raw + "===".slice((raw.length + 3) % 4);
+    const payload = JSON.parse(Buffer.from(padded, "base64").toString("utf8"));
+    const candidate =
+      payload.uid || payload.openid || payload.uuid || payload.user_id || payload.sub;
+    const value = candidate ? String(candidate).trim() : "";
+    return /^[a-zA-Z0-9:_.@-]{1,128}$/.test(value) ? value : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
 export const requireWorker = (event: any, configuredToken?: string, expectedEnv?: string): void => {
   if (!configuredToken) throw new ApiError(503, "WORKER_AUTH_NOT_CONFIGURED", "worker identity is not configured");
   const headers = normalizeHeaders(event?.headers);

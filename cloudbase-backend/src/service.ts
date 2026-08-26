@@ -80,6 +80,35 @@ export class TaskService {
     if (!task || task.owner_id !== ownerId) throw new ApiError(404, "TASK_NOT_FOUND", "任务不存在");
     return task;
   }
+
+  /** 即时分析(VLM)：基于已上传的视频创建任务，由 haoqiu-vlm 异步处理。 */
+  async createInstantJob(ownerId: string, uploadId: string, clientMatchId?: string): Promise<TaskRecord> {
+    const upload = await this.repo.getUpload(uploadId);
+    if (!upload || upload.owner_id !== ownerId) throw new ApiError(404, "UPLOAD_NOT_FOUND", "上传记录不存在");
+    const existing = await this.repo.getTask(uploadId);
+    if (existing) return existing;
+    const now = this.now();
+    const task: TaskRecord = {
+      _id: upload._id, owner_id: ownerId, client_match_id: upload.client_match_id || clientMatchId,
+      mode: "instant", status: "queued", stage: "queued", progress: 0,
+      input_object_key: upload.input_object_key, output_object_key: upload.output_object_key,
+      input: { filename: upload.original_filename, content_type: upload.content_type, size_bytes: upload.expected_size_bytes, duration_seconds: upload.duration_seconds },
+      raw_lifecycle: { delete_after: addDays(now, this.config.rawRetentionDays) },
+      result_lifecycle: {}, attempt: 0, max_attempts: 1, available_at: now, created_at: now, updated_at: now
+    };
+    return this.repo.createInstantTask(task);
+  }
+
+  /** 由 haoqiu-vlm 回写文字事件总结。 */
+  async completeInstant(taskId: string, content: string, model?: string): Promise<TaskRecord> {
+    return this.repo.saveInstantResult(taskId, {
+      status: "succeeded", stage: "completed", progress: 100,
+      text_result: { content, model, generated_at: new Date().toISOString() }
+    }, this.now());
+  }
+  async failInstant(taskId: string, code: string, message: string): Promise<TaskRecord> {
+    return this.repo.saveInstantResult(taskId, { status: "failed", stage: "failed", error: { code, message } }, this.now());
+  }
   async resultUrl(ownerId: string, taskId: string) {
     const task = await this.taskForUser(ownerId, taskId);
     if (task.status !== "succeeded" || !task.output) throw new ApiError(409, "RESULT_NOT_READY", "检测结果尚未生成");

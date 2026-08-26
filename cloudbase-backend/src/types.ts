@@ -14,12 +14,15 @@ export interface UploadRecord {
   created_at: Date;
   ticket_expires_at: Date;
   pending_expires_at: Date;
+  confirmed_at?: Date;
 }
 
 export interface TaskRecord {
   _id: string;
   owner_id: string;
   client_match_id?: string;
+  /** 分析模式：instant = 即时分析(VLM 视频理解，快)；deep = 深度复盘(GPU 检测，慢) */
+  mode?: "instant" | "deep";
   status: TaskStatus;
   stage: string;
   progress: number;
@@ -40,6 +43,8 @@ export interface TaskRecord {
   model?: unknown;
   error?: { code: string; message: string };
   output?: { object_key: string; etag: string; size_bytes: number };
+  /** 即时分析(VLM)产出的文字事件总结 */
+  text_result?: { content: string; model?: string; generated_at?: string };
   eta_seconds?: number | null;
   created_at: Date;
   updated_at: Date;

@@ -1,8 +1,6 @@
 import type { CloudDetectionJob, CloudUploadTicket, CloudUploadTicketRequest, SignedDetectionVideo } from '../cloudDetectionTypes'
 import { getCloudBaseAccessToken } from './cloudBaseAuth'
 
-const cloudBase = (import.meta.env.VITE_CLOUDBASE_API_BASE as string | undefined)?.trim().replace(/\/+$/, '') ?? ''
-
 export class CloudDetectionApiError extends Error {
   status?: number
   code?: string
@@ -16,48 +14,62 @@ export class CloudDetectionApiError extends Error {
 }
 
 export function isCloudDetectionConfigured(): boolean {
-  return Boolean(cloudBase)
+  return Boolean(API_BASE)
 }
 
-function endpoint(path: string): string {
-  if (!cloudBase) throw new CloudDetectionApiError('未配置 CloudBase API 地址')
-  return `${cloudBase}${path}`
-}
-
-async function parseError(response: Response): Promise<CloudDetectionApiError> {
+function parsePayload(body: unknown): any {
+  if (body === undefined || body === null || body === '') return undefined
+  if (typeof body !== 'string') return body
   try {
-    const body = await response.json() as { detail?: string; error?: { code?: string; message?: string } }
-    return new CloudDetectionApiError(body.error?.message || body.detail || `请求失败（${response.status}）`, {
-      status: response.status,
-      code: body.error?.code,
-    })
+    return JSON.parse(body)
   } catch {
-    return new CloudDetectionApiError(`请求失败（${response.status}）`, { status: response.status })
+    return undefined
   }
 }
 
-async function cloudRequest<T>(path: string, init?: RequestInit, expectedStatus?: number): Promise<T> {
+// HTTP 访问服务基地址；仓库无 .env 时回落到线上网关，仍可经 VITE_DETECTION_API_BASE 覆盖。
+const API_BASE =
+  (import.meta.env.VITE_DETECTION_API_BASE as string | undefined)?.trim().replace(/\/$/, '') ||
+  'https://haoqiu-ai-prod-d3g2cm2xn3255c273.service.tcloudbase.com/haoqiu-api'
+
+/** 通过 HTTP 访问服务直调后端；前端附带 CloudBase 匿名登录的访问令牌，后端从中解析用户身份。 */
+async function invoke<T>(method: 'GET' | 'POST', path: string, payload?: Record<string, unknown>, expectedStatus?: number): Promise<T> {
+  const accessToken = await getCloudBaseAccessToken()
+  const url = `${API_BASE}${path}`
+
   let response: Response
   try {
-    const accessToken = await getCloudBaseAccessToken()
-    response = await fetch(endpoint(path), {
-      ...init,
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json', ...init?.headers, Authorization: `Bearer ${accessToken}` },
+    response = await fetch(url, {
+      method,
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${accessToken}`,
+      },
+      body: method === 'GET' ? undefined : JSON.stringify(payload ?? {}),
     })
   } catch (error) {
-    const detail = error instanceof Error ? error.message : ''
-    throw new CloudDetectionApiError(detail || '无法连接 CloudBase 服务，请检查网络后重试')
+    const detail = error instanceof Error ? `${error.name}: ${error.message}` : typeof error === 'string' ? error : JSON.stringify(error)
+    throw new CloudDetectionApiError(`无法连接 CloudBase 服务 [${detail}]`)
   }
-  if (!response.ok) throw await parseError(response)
+
+  const text = await response.text()
+  const data = parsePayload(text)
+
+  if (!response.ok) {
+    const error = data as { error?: { code?: string; message?: string }; detail?: string } | undefined
+    throw new CloudDetectionApiError(error?.error?.message || error?.detail || `请求失败（${response.status}）`, {
+      status: response.status,
+      code: error?.error?.code,
+    })
+  }
   if (expectedStatus && response.status !== expectedStatus) {
     throw new CloudDetectionApiError(`服务返回了非预期状态（${response.status}）`, { status: response.status })
   }
-  return response.json() as Promise<T>
+  return data as T
 }
 
 export function requestCloudUploadTicket(request: CloudUploadTicketRequest): Promise<CloudUploadTicket> {
-  return cloudRequest('/api/v1/cos-upload-tickets', { method: 'POST', body: JSON.stringify(request) }, 201)
+  return invoke('POST', '/api/v1/cos-upload-tickets', request as unknown as Record<string, unknown>, 201)
 }
 
 export function putWholeVideoToCos(
@@ -87,16 +99,22 @@ export function putWholeVideoToCos(
 }
 
 export function createCloudDetectionJob(uploadId: string, clientMatchId: string): Promise<CloudDetectionJob> {
-  return cloudRequest('/api/v1/cloud-detection-jobs', {
-    method: 'POST',
-    body: JSON.stringify({ upload_id: uploadId, client_match_id: clientMatchId }),
-  }, 202)
+  return invoke('POST', '/api/v1/cloud-detection-jobs', { upload_id: uploadId, client_match_id: clientMatchId }, 202)
 }
 
 export function getCloudDetectionJob(jobId: string): Promise<CloudDetectionJob> {
-  return cloudRequest(`/api/v1/cloud-detection-jobs/${encodeURIComponent(jobId)}`)
+  return invoke('GET', `/api/v1/cloud-detection-jobs/${encodeURIComponent(jobId)}`)
 }
 
 export function getSignedDetectionVideo(jobId: string): Promise<SignedDetectionVideo> {
-  return cloudRequest(`/api/v1/cloud-detection-jobs/${encodeURIComponent(jobId)}/artifacts/annotated-video-url`, { method: 'POST' })
+  return invoke('POST', `/api/v1/cloud-detection-jobs/${encodeURIComponent(jobId)}/artifacts/annotated-video-url`)
+}
+
+/** 即时分析：复用同一段已上传视频，交给视觉大模型出文字复盘。 */
+export function createInstantAnalysisJob(uploadId: string, clientMatchId: string): Promise<CloudDetectionJob> {
+  return invoke('POST', '/api/v1/instant-analysis', { upload_id: uploadId, client_match_id: clientMatchId }, 202)
+}
+
+export function getInstantAnalysisJob(jobId: string): Promise<CloudDetectionJob> {
+  return invoke('GET', `/api/v1/instant-analysis/${encodeURIComponent(jobId)}`)
 }

@@ -1,22 +1,52 @@
 import cloudbase from "@cloudbase/node-sdk";
-import { normalizeHeaders, requireUser, requireWorker } from "./src/auth";
-import { loadConfig } from "./src/config";
+import { cloudbaseContextUserId, normalizeHeaders, requireUser, requireWorker, userIdFromBearer } from "./src/auth";
+import { loadConfig, loadTencentCredentials } from "./src/config";
 import { TencentCosStore } from "./src/cos";
-import { CloudBaseRepository } from "./src/repository";
+import { CosRepository } from "./src/cos-repository";
 import { TaskService } from "./src/service";
 import { ApiError } from "./src/types";
 import type { TaskRecord } from "./src/types";
 import { haiCompletionBody, publicTask, workerTask } from "./src/http-contract";
 import { corsHeaders, requireAllowedOrigin, requireAllowedPreflight } from "./src/http-cors";
 
+// 吞掉未处理的 Promise rejection，避免云函数进程崩溃（历史遗留：旧 SDK 的 createCollection
+// 逃逸拒绝问题；现在已不再依赖 createCollection，此处仅作兜底）。
+let lastUnhandled: string | undefined;
+process.on("unhandledRejection", (reason) => {
+  lastUnhandled = reason instanceof Error ? `${reason.name}: ${reason.message}` : String(reason);
+  console.error("unhandledRejection swallowed", lastUnhandled);
+});
+
 const config = loadConfig();
 let service: TaskService | undefined;
+let appInstance: ReturnType<typeof cloudbase.init> | undefined;
+const getCloudApp = (): ReturnType<typeof cloudbase.init> => {
+  if (!appInstance) appInstance = cloudbase.init({ env: config.envId });
+  return appInstance;
+};
 const getService = (): TaskService => {
   if (!service) {
-    const app = cloudbase.init({ env: config.envId });
-    service = new TaskService(new CloudBaseRepository(app.database()), new TencentCosStore(config.bucket, config.region), config);
+    const store = new TencentCosStore(config.bucket, config.region);
+    // 该体验版环境没有文档库，改为 COS JSON 文件存储。单用户短生命周期任务用不上事务/复杂查询。
+    service = new TaskService(new CosRepository(store), store, config);
   }
   return service;
+};
+
+// Web clients call this function through the SDK (callFunction), which bypasses the HTTP
+// access gateway. Fall back to the platform-verified SCF identity before rejecting.
+const currentUser = (event: any, context: any): string => {
+  try {
+    return requireUser(event, context, config.allowTestIdentity);
+  } catch (error) {
+    if (!(error instanceof ApiError) || error.code !== "AUTH_REQUIRED") throw error;
+    let uid: string | undefined;
+    try { uid = cloudbaseContextUserId(cloudbase.getCloudbaseContext(context) as unknown as Record<string, unknown>); }
+    catch { uid = undefined; }
+    if (!uid) uid = userIdFromBearer(event);
+    if (uid) return uid;
+    throw error;
+  }
 };
 
 const json = (statusCode: number, value: unknown, origin?: string) => ({
@@ -46,41 +76,92 @@ export const main = async (event: any, context: any) => {
       return respond(204, null);
     }
     const body = parseBody(event);
-    if (method === "GET" && route === "/health") return respond(200, { status: "ok" });
+    if (method === "GET" && route === "/health") {
+      const diag: any = { status: "ok", ts: new Date().toISOString(), storage: "cos-json" };
+      const creds = loadTencentCredentials();
+      diag.cos = {
+        secretIdConfigured: Boolean(creds.SecretId),
+        secretKeyConfigured: Boolean(creds.SecretKey),
+        sessionTokenConfigured: Boolean(creds.SecurityToken),
+        bucket: config.bucket,
+        region: config.region,
+      };
+      try {
+        const store = new TencentCosStore(config.bucket, config.region);
+        const listProbe = async (prefix: string): Promise<Record<string, unknown>> => {
+          try {
+            const keys = await store.listKeys(prefix, 5);
+            return { readable: true, count: keys.length, sample: keys.slice(0, 3) };
+          } catch (e) {
+            return { readable: false, error: e instanceof Error ? e.message : String(e) };
+          }
+        };
+        diag.db = { mode: "cos-json" };
+        diag.db.uploads = await listProbe("db/upload/");
+        diag.db.tasks = await listProbe("db/task/");
+      } catch (e) {
+        diag.db = { mode: "cos-json", initialized: false, error: e instanceof Error ? e.message : String(e) };
+      }
+      try {
+        getService();
+        diag.service = { built: true };
+      } catch (e) {
+        diag.service = { built: false, error: e instanceof Error ? e.message : String(e) };
+      }
+      diag.lastUnhandled = lastUnhandled;
+      return respond(200, diag);
+    }
     if (route.startsWith("/worker/") || route.startsWith("/v1/worker/")) {
       requireWorker(event, config.workerToken, config.envId);
     }
     const api = getService();
 
     if (method === "POST" && ["/api/v1/cos-upload-tickets", "/api/v1/uploads/ticket"].includes(route)) {
-      return respond(201, await api.issueUpload(requireUser(event, context, config.allowTestIdentity), body));
+      return respond(201, await api.issueUpload(currentUser(event, context), body));
     }
     if (method === "POST" && route === "/api/v1/cloud-detection-jobs") {
       if (!body.upload_id || !body.client_match_id) throw new ApiError(400, "INVALID_INPUT", "upload_id 和 client_match_id 为必填项");
       return respond(202, publicTask(await api.confirmUpload(
-        requireUser(event, context, config.allowTestIdentity), String(body.upload_id), String(body.client_match_id)
+        currentUser(event, context), String(body.upload_id), String(body.client_match_id)
       )));
     }
     let match = route.match(/^\/api\/v1\/uploads\/([^/]+)\/confirm$/);
     if (method === "POST" && match) {
-      return respond(202, publicTask(await api.confirmUpload(requireUser(event, context, config.allowTestIdentity), decodeURIComponent(match[1]))));
+      return respond(202, publicTask(await api.confirmUpload(currentUser(event, context), decodeURIComponent(match[1]))));
     }
     match = route.match(/^\/api\/v1\/cloud-detection-jobs\/([^/]+)$/);
     if (method === "GET" && match) {
-      return respond(200, publicTask(await api.taskForUser(requireUser(event, context, config.allowTestIdentity), decodeURIComponent(match[1]))));
+      return respond(200, publicTask(await api.taskForUser(currentUser(event, context), decodeURIComponent(match[1]))));
     }
     match = route.match(/^\/api\/v1\/detection-jobs\/([^/]+)$/);
     if (method === "GET" && match) {
-      return respond(200, publicTask(await api.taskForUser(requireUser(event, context, config.allowTestIdentity), decodeURIComponent(match[1]))));
+      return respond(200, publicTask(await api.taskForUser(currentUser(event, context), decodeURIComponent(match[1]))));
     }
     match = route.match(/^\/api\/v1\/cloud-detection-jobs\/([^/]+)\/artifacts\/annotated-video-url$/);
     if (method === "POST" && match) {
-      return respond(200, await api.resultUrl(requireUser(event, context, config.allowTestIdentity), decodeURIComponent(match[1])));
+      return respond(200, await api.resultUrl(currentUser(event, context), decodeURIComponent(match[1])));
     }
     match = route.match(/^\/api\/v1\/detection-jobs\/([^/]+)\/artifacts\/annotated-video$/);
     if (method === "GET" && match) {
-      return respond(200, await api.resultUrl(requireUser(event, context, config.allowTestIdentity), decodeURIComponent(match[1])));
+      return respond(200, await api.resultUrl(currentUser(event, context), decodeURIComponent(match[1])));
     }
+    match = route.match(/^\/api\/v1\/instant-analysis\/([^/]+)$/);
+    if (method === "GET" && match) {
+      return respond(200, publicTask(await api.taskForUser(currentUser(event, context), decodeURIComponent(match[1]))));
+    }
+    if (method === "POST" && route === "/api/v1/instant-analysis") {
+      if (!body.upload_id) throw new ApiError(400, "INVALID_INPUT", "upload_id 为必填项");
+      const task = await api.createInstantJob(
+        currentUser(event, context),
+        String(body.upload_id),
+        body.client_match_id ? String(body.client_match_id) : undefined
+      );
+      getCloudApp()
+        .callFunction({ name: "haoqiu-vlm", data: { taskId: task._id, envId: config.envId } })
+        .catch((err) => console.error("haoqiu-vlm trigger failed", err instanceof Error ? err.message : err));
+      return respond(202, publicTask(task));
+    }
+
     if (method === "POST" && route === "/worker/v1/tasks/claim") {
       const task = await api.claim(body);
       return task ? respond(200, workerTask(task)) : respond(204, null);

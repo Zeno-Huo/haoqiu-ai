@@ -30,6 +30,16 @@ export default function VideoQuality() {
   const hasFile = Boolean(getCachedVideoFile(match.id))
   const canResumeReal = serviceConfigured && Boolean(match.cloudUploadId || match.cloudJobId)
   const canStartReal = serviceConfigured && hasFile && match.videoSource === 'local-file'
+  const canResumeInstant = serviceConfigured && Boolean(match.cloudUploadId || match.instantJobId)
+  const canStartInstant = canStartReal || canResumeInstant
+  // 两条链路的可用性判断一致，差别只在耗时与产物；同一段上传可同时跑。
+  const unavailableReason = !serviceConfigured
+    ? '当前未配置云端分析服务。'
+    : match.videoSource === 'demo'
+      ? '内置演示片段不包含可上传的真实文件。'
+      : !hasFile
+        ? '当前会话已丢失视频文件，请重新选择。'
+        : ''
   const portrait = Boolean(meta?.width && meta?.height && meta.height > meta.width)
   const narrow = Boolean(meta?.width && meta.width < 960)
   const needsReshoot = portrait || narrow
@@ -44,7 +54,7 @@ export default function VideoQuality() {
         <header className="mb-7">
           <p className="eyebrow">步骤 2 / 3 · 画面检查</p>
           <h1 className="mt-2 text-3xl font-semibold text-[var(--text-primary)]">查看画面检查与拍摄建议</h1>
-          <p className="mt-2 text-sm leading-6 text-[var(--text-muted)]">视频尚未上传。确认画面信息后，可分别进入真实检测任务或球队复盘 Demo。</p>
+          <p className="mt-2 text-sm leading-6 text-[var(--text-muted)]">视频尚未上传。确认画面信息后，可选择即时分析（比赛中快速决策）或深度复盘（赛后逐帧检测）。</p>
         </header>
 
         <section className="panel p-5 sm:p-6">
@@ -66,18 +76,27 @@ export default function VideoQuality() {
           <p className={`mt-4 rounded-md border px-4 py-3 text-sm ${needsReshoot ? 'border-[var(--attack)] text-[var(--attack)]' : 'border-[var(--ai)] text-[var(--ai)]'}`}>{needsReshoot ? '建议重拍：当前画幅或分辨率不理想；如继续真实检测，结果可能存在更多漏检。' : '画面基础信息可用；真实检测仍可能存在漏检和类别误判。'}</p>
 
           <div className="mt-7 grid gap-3 sm:grid-cols-2">
-            <article className="rounded-md border border-[var(--line)] bg-[var(--content)] p-4">
-              <p className="text-sm font-semibold text-[var(--text-primary)]">真实检测任务</p>
+            <article className="rounded-md border border-[var(--ai)] bg-[var(--content)] p-4">
+              <p className="text-sm font-semibold text-[var(--text-primary)]">即时分析</p>
+              <p className="mt-1 text-xs leading-5 text-[var(--ai)]">快速统计比赛数据，辅助教练在比赛中决策</p>
               <p className="mt-2 min-h-10 text-xs leading-5 text-[var(--text-muted)]">
-                {canResumeReal ? '已有任务编号，可恢复查询进度。' : !serviceConfigured ? '当前未配置真实检测服务。' : match.videoSource === 'demo' ? '内置演示片段不包含可上传的真实文件。' : !hasFile ? '当前会话已丢失视频文件，请重新选择。' : '将上传视频并调用球员检测模型。'}
+                {canResumeInstant ? '已有上传记录，可直接查看或继续即时分析。' : unavailableReason || '上传后由视觉大模型快速读画面，几分钟内出文字复盘。'}
               </p>
-              <button className="btn-primary mt-4 w-full" disabled={!canStartReal && !canResumeReal} onClick={() => navigate(`/match/${match.id}/detection`)}>{canResumeReal ? '继续真实检测任务' : '开始真实检测'} <span aria-hidden>→</span></button>
+              <button className="btn-primary mt-4 w-full" disabled={!canStartInstant} onClick={() => navigate(`/match/${match.id}/instant`)}>{canResumeInstant ? '继续即时分析' : '开始即时分析'} <span aria-hidden>→</span></button>
             </article>
             <article className="rounded-md border border-[var(--line)] bg-[var(--content)] p-4">
-              <p className="text-sm font-semibold text-[var(--text-primary)]">球队复盘 Demo</p>
-              <p className="mt-2 min-h-10 text-xs leading-5 text-[var(--text-muted)]">不上传视频；比分、控球、射门与球员数据均为本地演示。</p>
-              <button className="btn-secondary mt-4 w-full" onClick={() => navigate(`/match/${match.id}/analyzing`)}>查看演示复盘</button>
+              <p className="text-sm font-semibold text-[var(--text-primary)]">深度复盘</p>
+              <p className="mt-1 text-xs leading-5 text-[var(--text-secondary)]">分析时间较长，仅适用赛后复盘以及球员成长</p>
+              <p className="mt-2 min-h-10 text-xs leading-5 text-[var(--text-muted)]">
+                {canResumeReal ? '已有任务编号，可恢复查询进度。' : unavailableReason || 'GPU 逐帧检测球员候选，并生成标注视频。'}
+              </p>
+              <button className="btn-secondary mt-4 w-full" disabled={!canStartReal && !canResumeReal} onClick={() => navigate(`/match/${match.id}/detection`)}>{canResumeReal ? '继续深度复盘' : '开始深度复盘'} <span aria-hidden>→</span></button>
             </article>
+          </div>
+          <div className="mt-3 rounded-md border border-[var(--line)] bg-[var(--content)] p-4">
+            <p className="text-sm font-semibold text-[var(--text-primary)]">球队复盘 Demo</p>
+            <p className="mt-2 text-xs leading-5 text-[var(--text-muted)]">不上传视频；比分、控球、射门与球员数据均为本地演示。</p>
+            <button className="btn-secondary mt-4 w-full sm:w-auto" onClick={() => navigate(`/match/${match.id}/analyzing`)}>查看演示复盘</button>
           </div>
           <div className="mt-5 text-center"><Link className="text-sm text-[var(--text-secondary)] hover:text-[var(--ai)]" to="/match/new">← 换一段视频</Link></div>
         </section>

@@ -16,6 +16,9 @@ export interface Config {
   workerToken?: string;
   allowTestIdentity: boolean;
   allowedWebOrigins: string[];
+  vlmProvider: string;
+  vlmApiKey?: string;
+  vlmModel: string;
 }
 
 export const loadTencentCredentials = (env: NodeJS.ProcessEnv = process.env) => ({
@@ -47,5 +50,8 @@ export const loadConfig = (): Config => ({
   maxLeaseSeconds: Math.min(integer("MAX_LEASE_SECONDS", 120), 300),
   workerToken: process.env.WORKER_API_TOKEN,
   allowTestIdentity: process.env.ALLOW_TEST_IDENTITY === "true" && process.env.NODE_ENV !== "production",
-  allowedWebOrigins: parseAllowedWebOrigins(process.env.ALLOWED_WEB_ORIGINS)
+  allowedWebOrigins: parseAllowedWebOrigins(process.env.ALLOWED_WEB_ORIGINS),
+  vlmProvider: process.env.VLM_PROVIDER || "qwen",
+  vlmApiKey: process.env.VLM_API_KEY || process.env.DASHSCOPE_API_KEY,
+  vlmModel: process.env.VLM_MODEL || "qwen-vl-plus"
 });

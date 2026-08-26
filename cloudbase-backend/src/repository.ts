@@ -12,6 +12,8 @@ export interface TaskRepository {
   progress(taskId: string, token: string, patch: Partial<TaskRecord>, now: Date): Promise<TaskRecord>;
   complete(taskId: string, token: string, idempotencyKey: string, patch: Partial<TaskRecord>, now: Date): Promise<TaskRecord>;
   fail(taskId: string, token: string, retryable: boolean, error: { code: string; message: string }, now: Date): Promise<TaskRecord>;
+  createInstantTask(task: TaskRecord): Promise<TaskRecord>;
+  saveInstantResult(taskId: string, patch: Partial<TaskRecord>, now: Date): Promise<TaskRecord>;
 }
 
 const one = <T>(result: any): T | null => (result?.data?.[0] as T | undefined) || null;
@@ -111,5 +113,19 @@ export class CloudBaseRepository implements TaskRepository {
       if (!retry) update.completed_at = now;
       return update;
     });
+  }
+
+  async createInstantTask(task: TaskRecord): Promise<TaskRecord> {
+    await this.db.collection("haoqiu_detection_tasks").add(task);
+    return task;
+  }
+
+  async saveInstantResult(taskId: string, patch: Partial<TaskRecord>, now: Date): Promise<TaskRecord> {
+    const task = one<TaskRecord>(await this.db.collection("haoqiu_detection_tasks").doc(taskId).get());
+    if (!task) throw new ApiError(404, "TASK_NOT_FOUND", "任务不存在");
+    const update: Partial<TaskRecord> = { ...patch, updated_at: now };
+    if (patch.status === "succeeded" && !task.completed_at) update.completed_at = now;
+    await this.db.collection("haoqiu_detection_tasks").doc(taskId).update(update);
+    return { ...task, ...update } as TaskRecord;
   }
 }
