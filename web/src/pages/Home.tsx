@@ -232,6 +232,16 @@ export default function Home() {
       <main className="home-content">
         <section className="sphere-stage">
           <ParticleSphere />
+          <div className="home-copy">
+            <span className="home-kicker">球队复盘</span>
+            <h1>看清每一场球</h1>
+            <p>数据，一起看懂</p>
+            <div className="home-signals" aria-label="核心数据">
+              <span>比分</span>
+              <span>控球</span>
+              <span>射门</span>
+            </div>
+          </div>
           <div className="sphere-actions">
             <Link to="/match/new" className="sphere-cta">
               选择分析模式 <span aria-hidden>→</span>
