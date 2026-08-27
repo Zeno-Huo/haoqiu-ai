@@ -61,7 +61,7 @@ export default function IdentifyPlayers() {
 
         <section className="panel p-5 sm:p-6">
           <p className="text-xs text-[var(--text-muted)]">{match.videoName || match.name} · 本地模拟识别</p>
-          <h2 className="mt-3 text-lg font-semibold text-[var(--text-primary)]">识别到 {candidates.length} 名球员</h2>
+          <h2 className="mt-3 text-lg font-semibold text-[var(--text-primary)]">画面候选 {candidates.length} 名</h2>
           <p className="mt-2 text-sm leading-6 text-[var(--text-secondary)]">{summary}</p>
 
           {!expanded && (

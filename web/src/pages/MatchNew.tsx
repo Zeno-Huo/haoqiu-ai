@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react'
-import { useNavigate, useSearchParams } from 'react-router-dom'
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { createRng } from '../lib/seed'
-import { getTeamProfile, newId, saveMatch } from '../lib/storage'
+import { getTeamProfile, listMatches, newId, saveMatch } from '../lib/storage'
 import { todayStr } from '../lib/utils'
 import { cacheVideoFile } from '../lib/videoFileCache'
 import type { Match, MatchType, Player } from '../types'
@@ -15,17 +15,17 @@ function clampScore(raw: string): number {
 
 export default function MatchNew() {
   const navigate = useNavigate()
+  const location = useLocation()
   const [searchParams] = useSearchParams()
   const mode = searchParams.get('mode')
   const inputRef = useRef<HTMLInputElement>(null)
   const probeTokenRef = useRef(0)
   const team = getTeamProfile()
-  const [videoName, setVideoName] = useState('')
-  const [selectedFile, setSelectedFile] = useState<File>()
-  const [videoProbeState, setVideoProbeState] = useState<'idle' | 'probing' | 'ready' | 'error'>('idle')
-  const [videoMeta, setVideoMeta] = useState<Match['videoMeta']>()
-  const [framePreview, setFramePreview] = useState('')
-  const [openingFramePoint, setOpeningFramePoint] = useState<{ x: number; y: number }>()
+  const incoming = location.state as { file?: File; videoMeta?: Match['videoMeta'] } | null
+  const [videoName, setVideoName] = useState(incoming?.file?.name ?? '')
+  const [selectedFile, setSelectedFile] = useState<File | undefined>(incoming?.file)
+  const [videoProbeState, setVideoProbeState] = useState<'idle' | 'probing' | 'ready' | 'error'>(incoming?.file ? 'ready' : 'idle')
+  const [videoMeta, setVideoMeta] = useState<Match['videoMeta']>(incoming?.videoMeta)
   const [jerseyHint, setJerseyHint] = useState('')
   const [date, setDate] = useState(todayStr())
   const [type, setType] = useState<MatchType>('7v7')
@@ -33,23 +33,35 @@ export default function MatchNew() {
   const [myScore, setMyScore] = useState(0)
   const [oppScore, setOppScore] = useState(0)
   const [error, setError] = useState('')
+  const [selectedMode, setSelectedMode] = useState<'instant' | 'deep' | 'single' | 'training'>()
+  const [videoSourceTab, setVideoSourceTab] = useState<'new' | 'previous'>('new')
+  const [previousMatch, setPreviousMatch] = useState<Match>()
+  const [targetNumber, setTargetNumber] = useState('')
+  const [targetNickname, setTargetNickname] = useState('')
+  const [targetClue, setTargetClue] = useState('')
+  const [trainingAction, setTrainingAction] = useState('')
+  const [reviewScope, setReviewScope] = useState('整场')
 
-  const canStart = Boolean(videoName && videoProbeState === 'ready')
-  const modeTitle = mode === 'instant' ? '上传比赛视频，开始即时分析' : mode === 'deep' ? '上传比赛视频，开始深度复盘' : mode === 'single' ? '上传视频，开始单人跟拍' : '上传比赛视频'
+  const activeMode = mode || selectedMode
+  const canStart = Boolean(videoName && videoProbeState === 'ready' && activeMode)
+  const modeTitle = '选择视频'
   const modeHint = mode === 'instant'
-    ? '选择一段球队视频，上传后由视觉大模型快速给出文字判断。'
+    ? '横屏、画面稳定、能看到主要比赛区域即可。'
     : mode === 'deep'
-    ? '选择一段球队视频，上传后由 GPU 做逐帧检测并生成标注视频。'
+    ? '横屏、画面稳定、能看到主要比赛区域即可。'
     : mode === 'single'
-    ? '选择一段以一名球员为主的训练或比赛视频。YOLO 先完成整段检测，再由你确认跟拍对象。'
-    : '选择一段球队视频，先检查画面信息；下一步可选择真实检测或独立的球队复盘 Demo。'
-  const startLabel = mode === 'instant' ? '开始即时分析' : mode === 'deep' ? '开始深度复盘' : mode === 'single' ? '开始单人跟拍' : '下一步：检查视频'
+    ? '横屏、画面稳定、能看到主要比赛区域即可。'
+    : '横屏、画面稳定、能看到主要比赛区域即可。'
+  const startLabel = activeMode === 'instant' ? '开始分析' : activeMode === 'deep' ? '开始复盘' : activeMode === 'single' ? '开始跟拍' : activeMode === 'training' ? '开始分析' : '选择复盘方式'
 
   function startReview() {
     if (!videoName) {
       setError('请选择视频，或使用演示片段')
       return
     }
+    if (activeMode === 'single' && !targetNumber.trim() && !targetNickname.trim() && !targetClue.trim()) { setError('请填写号码、昵称或画面线索至少一项'); return }
+    if (activeMode === 'training' && !trainingAction) { setError('请选择训练动作'); return }
+    if (previousMatch && !previousMatch.cloudUploadId && !previousMatch.instantJobId && !previousMatch.cloudJobId && !selectedFile) { setError('该视频文件不可用，请重新选择'); return }
 
     const id = newId('m')
     const rng = createRng(`comparison:${id}`)
@@ -68,7 +80,7 @@ export default function MatchNew() {
     })
     const match: Match = {
       id,
-      name: mode === 'single' ? `${date} 单人跟拍` : `${date} 球队复盘`,
+      name: activeMode === 'single' ? `${date} 单人跟拍` : activeMode === 'training' ? `${date} 训练反馈` : `${date} 球队复盘`,
       date,
       type,
       duration: 15 * 60,
@@ -83,35 +95,40 @@ export default function MatchNew() {
       videoName,
       videoSource: selectedFile ? 'local-file' : 'demo',
       videoMeta,
-      ourTeamContext: mode === 'instant' ? {
+      cloudUploadId: previousMatch?.cloudUploadId,
+      instantJobId: previousMatch?.instantJobId,
+      cloudJobId: previousMatch?.cloudJobId,
+      ourTeamContext: {
         teamName: team.name,
         jerseyHint: jerseyHint.trim() || undefined,
-        openingFramePoint,
-      } : undefined,
+      },
       identificationStatus: 'pending',
       players,
       createdAt: Date.now(),
-      analysisMode: mode === 'single' ? 'single' : undefined,
+      analysisMode: activeMode === 'single' ? 'single' : undefined,
     }
     saveMatch(match)
     if (selectedFile) cacheVideoFile(id, selectedFile)
-    if (mode === 'instant') navigate(`/match/${id}/instant`, { replace: true })
-    else if (mode === 'deep') navigate(`/match/${id}/detection`, { replace: true })
-    else if (mode === 'single') navigate(`/match/${id}/tracking`, { replace: true })
-    else navigate(`/match/${id}/quality`, { replace: true })
+    if (activeMode === 'instant') navigate(`/match/${id}/instant`, { replace: true })
+    else if (activeMode === 'training') navigate(`/match/${id}/training`, { replace: true })
+    else if (activeMode === 'deep') navigate(`/match/${id}/detection`, { replace: true })
+    else if (activeMode === 'single') navigate(`/match/${id}/tracking`, { replace: true })
+    else navigate(`/match/${id}/analyzing`, { replace: true })
   }
 
+  if (!mode && !incoming?.file) return <div className="page-shell mode-page"><div className="mode-page-inner"><header className="mode-page-header"><h1>选择分析模式</h1></header><section className="mode-picker mode-picker-standalone">{[['instant','◈','快速分析','推荐','赛中快速查看','3–5 分钟 · 球队重点'],['deep','◫','深度复盘','','赛后完整回看','完整时间线 · 预计更久'],['single','◎','个人追踪','','观察一名球员','个人片段 · 本场特点'],['training','⌁','训练模式','','单人动作反馈','短视频即可 · 练习提示']].map(([key,icon,title,badge,line,result]) => <button key={key} type="button" className="mode-choice-card" onClick={() => navigate(`/match/new?mode=${key}`)}><span className="mode-choice-icon" aria-hidden>{icon}</span><span className="mode-choice-top"><strong>{title}</strong>{badge && <em>{badge}</em>}</span><span className="mode-choice-line">{line}</span><small>{result}</small><span className="mode-choice-arrow" aria-hidden>→</span></button>)}</section></div></div>
   return (
     <div className="page-shell px-4 py-10">
       <div className="mx-auto max-w-3xl">
         <header className="mb-7">
-          <h1 className="text-3xl font-semibold text-[var(--text-primary)]">{modeTitle}</h1>
-          <p className="mt-2 max-w-2xl text-sm leading-6 text-[var(--text-muted)]">
-            {modeHint}
-          </p>
+          <h1 className="text-3xl font-semibold text-[var(--text-primary)]">{incoming?.file && !mode ? '选择复盘方式' : modeTitle}</h1>
+          {(!incoming?.file || mode) && <p className="mt-2 max-w-2xl text-sm leading-6 text-[var(--text-muted)]">{modeHint}</p>}
         </header>
 
         <section className="panel p-5 sm:p-6">
+          <div className="source-tabs" role="tablist" aria-label="选择视频来源"><button type="button" className={videoSourceTab === 'new' ? 'is-active' : ''} onClick={() => setVideoSourceTab('new')}>新视频</button><button type="button" className={videoSourceTab === 'previous' ? 'is-active' : ''} onClick={() => setVideoSourceTab('previous')}>过往视频</button></div>
+          {videoSourceTab === 'previous' && <div className="previous-video-list">{listMatches().slice(0, 6).map((item) => <button key={item.id} type="button" className="previous-video-row" onClick={() => { setPreviousMatch(item); setVideoName(item.videoName || item.name); setVideoMeta(item.videoMeta); setVideoProbeState('ready'); setSelectedFile(undefined); setVideoSourceTab('previous'); setError('') }}><strong>{item.videoName || item.name}</strong><span>{item.date} · {item.videoMeta?.durationSeconds ? `${Math.floor(item.videoMeta.durationSeconds / 60)}分${Math.round(item.videoMeta.durationSeconds % 60)}秒` : '视频'}</span><b>选择</b></button>)}</div>}
+          {videoSourceTab === 'new' && (<>
           <input
             ref={inputRef}
             className="sr-only"
@@ -126,7 +143,7 @@ export default function MatchNew() {
                 setVideoName('')
                 setVideoMeta(undefined)
                 setVideoProbeState('error')
-                setError('真实检测 v0.1 仅支持 MP4 或 MOV 视频')
+                setError('当前仅支持 MP4 或 MOV 视频')
                 return
               }
               if (file && file.size > 300 * 1024 * 1024) {
@@ -141,8 +158,6 @@ export default function MatchNew() {
               setSelectedFile(file)
               setVideoName(file?.name ?? '')
               setVideoMeta(file ? { sizeBytes: file.size } : undefined)
-              setFramePreview('')
-              setOpeningFramePoint(undefined)
               setVideoProbeState(file ? 'probing' : 'idle')
               if (file) {
                 const url = URL.createObjectURL(file)
@@ -166,18 +181,6 @@ export default function MatchNew() {
                     probe.currentTime = Math.min(0.2, Math.max(0, probe.duration / 2))
                   }
                 }
-                probe.onseeked = () => {
-                  if (probeToken !== probeTokenRef.current) return
-                  const canvas = document.createElement('canvas')
-                  canvas.width = probe.videoWidth
-                  canvas.height = probe.videoHeight
-                  const context = canvas.getContext('2d')
-                  if (context && canvas.width && canvas.height) {
-                    context.drawImage(probe, 0, 0, canvas.width, canvas.height)
-                    setFramePreview(canvas.toDataURL('image/jpeg', 0.82))
-                  }
-                  URL.revokeObjectURL(url)
-                }
                 probe.onerror = () => {
                   if (probeToken === probeTokenRef.current) {
                     if (inputRef.current) inputRef.current.value = ''
@@ -194,7 +197,7 @@ export default function MatchNew() {
               setError('')
             }}
           />
-          <button
+          {videoName && incoming?.file ? <div className="selected-video-summary"><strong>{videoName}</strong><span>{videoMeta?.durationSeconds ? `${Math.floor(videoMeta.durationSeconds / 60)}分${Math.round(videoMeta.durationSeconds % 60)}秒` : '已选择视频'}</span><button type="button" className="text-sm text-[var(--ai)]" onClick={() => navigate('/')}>更换视频</button></div> : <button
             className={`upload-dropzone w-full p-6 ${videoName ? 'has-file' : ''}`}
             type="button"
             onClick={() => inputRef.current?.click()}
@@ -206,7 +209,7 @@ export default function MatchNew() {
                 {videoProbeState === 'probing' ? '正在读取视频信息…' : videoName ? '已读取本地文件信息 · 尚未上传' : '支持 MP4 / MOV · 上限 300MB、15 分钟'}
               </span>
             </span>
-          </button>
+          </button>}
 
           <div className="mt-3 text-center">
             <button className="text-sm text-[var(--ai)] hover:underline" type="button" onClick={() => { probeTokenRef.current += 1; if (inputRef.current) inputRef.current.value = ''; setSelectedFile(undefined); setVideoName('好球Ai_演示片段.mp4'); setVideoMeta({ sizeBytes: 0, durationSeconds: 20, width: 1280, height: 720 }); setVideoProbeState('ready'); setError('') }}>
@@ -214,33 +217,29 @@ export default function MatchNew() {
             </button>
           </div>
 
-          {mode === 'instant' && videoProbeState === 'ready' && selectedFile && (
-            <section className="mt-6 rounded-md border border-[var(--line)] bg-[var(--content)] p-4">
-              <h2 className="text-base font-semibold text-[var(--text-primary)]">确认本场我方（推荐）</h2>
-              <p className="mt-1 text-xs leading-5 text-[var(--text-muted)]">点击首帧中的任意一名我方球员。千问会把他所在一侧视为我方；这只是本场线索，不使用固定号码或固定球衣颜色。</p>
-              {framePreview ? (
-                <button type="button" className="relative mt-4 block w-full overflow-hidden rounded-md border border-[var(--line)] bg-black" onClick={(event) => {
-                  const rect = event.currentTarget.getBoundingClientRect()
-                  setOpeningFramePoint({ x: Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width)), y: Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height)) })
-                }} aria-label="点击标记本场我方球员">
-                  <img src={framePreview} alt="视频首帧，点击任意一名我方球员" className="block max-h-72 w-full object-contain" />
-                  {openingFramePoint && <span className="pointer-events-none absolute h-7 w-7 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-[var(--ai)] bg-[var(--ai)]/20 shadow-[0_0_0_4px_rgba(101,214,176,.18)]" style={{ left: `${openingFramePoint.x * 100}%`, top: `${openingFramePoint.y * 100}%` }} />}
-                </button>
-              ) : <p className="mt-4 rounded-md border border-dashed border-[var(--line)] p-4 text-xs text-[var(--text-muted)]">正在提取视频首帧…</p>}
-              <label className="field-label mt-4">我方球衣补充（可选）</label>
-              <input className="input-base" value={jerseyHint} maxLength={80} onChange={(event) => setJerseyHint(event.target.value)} placeholder="例如：白色上衣、深色短裤；或只写“荧光训练背心”" />
-              <p className={`mt-2 text-xs ${openingFramePoint ? 'text-[var(--ai)]' : 'text-[var(--text-muted)]'}`}>{openingFramePoint ? '已标记我方球员；会随本次视频提交。' : '未标记也可分析，但模型更难稳定区分我方与对方。'}</p>
+          {videoProbeState === 'ready' && !mode && !selectedMode && (
+            <section className="mode-picker" aria-labelledby="mode-picker-title">
+              <h2 id="mode-picker-title">选择复盘方式</h2>
+              {[['instant','快速分析','推荐','适合赛中或中场快速查看','几分钟看到比分、控球、射门和球队重点'],['deep','深度复盘','','适合赛后完整复盘','查看事件时间线、关键片段和球队表现'],['single','个人追踪','','适合持续观察一名球员','查看个人片段、数据摘要和本场特点'],['training','训练模式','','适合单人训练和动作纠正','查看动作问题和下一次练习提示']].map(([key,title,badge,subtitle,desc]) => <button key={key} type="button" className="mode-choice-card" onClick={() => setSelectedMode(key as 'instant' | 'deep' | 'single' | 'training')}><span className="mode-choice-top"><strong>{title}</strong>{badge && <em>{badge}</em>}</span><span>{subtitle}</span><small>{desc}</small><b>{title}</b></button>)}
             </section>
           )}
 
+          {videoProbeState === 'ready' && (Boolean(mode || selectedMode) && (
+            <section className="mt-6 rounded-md border border-[var(--line)] bg-[var(--content)] p-4">
+              {(activeMode === 'instant' || activeMode === 'deep') && <><label className="field-label mt-4">我方球衣补充（可选）</label><input className="input-base" value={jerseyHint} maxLength={80} onChange={(event) => setJerseyHint(event.target.value)} placeholder="例如：白色上衣、深色短裤" />{activeMode === 'deep' && <><label className="field-label mt-4">复盘范围（可选）</label><select className="input-base" value={reviewScope} onChange={(event) => setReviewScope(event.target.value)}><option>整场</option><option>上半场</option><option>下半场</option></select></>}</>}
+              {activeMode === 'single' && <><label className="field-label">目标球员号码</label><input className="input-base" value={targetNumber} onChange={(event) => setTargetNumber(event.target.value)} placeholder="例如 10" /><label className="field-label mt-4">昵称</label><input className="input-base" value={targetNickname} onChange={(event) => setTargetNickname(event.target.value)} placeholder="号码或昵称至少填一项" /><label className="field-label mt-4">画面位置线索（可选）</label><input className="input-base" value={targetClue} onChange={(event) => setTargetClue(event.target.value)} placeholder="例如：靠近左侧边线" /></>}
+              {activeMode === 'training' && <><label className="field-label">训练动作</label><select className="input-base" value={trainingAction} onChange={(event) => setTrainingAction(event.target.value)}><option value="">请选择</option><option>停球</option><option>传球</option><option>带球</option><option>射门</option></select><label className="field-label mt-4">惯用脚（可选）</label><select className="input-base"><option>不填写</option><option>左脚</option><option>右脚</option></select></>}
+            </section>
+          ))}
+
           {error && <p className="mt-5 text-sm text-[var(--danger)]">{error}</p>}
-          <div className="mt-6">
+          {(Boolean(mode || selectedMode)) && <div className="mt-6">
             <button className="btn-primary w-full justify-center" type="button" disabled={!canStart} onClick={startReview}>
               {videoProbeState === 'probing' ? '正在读取视频信息…' : startLabel} {videoProbeState !== 'probing' && <span aria-hidden>→</span>}
             </button>
-          </div>
+          </div>}
 
-          <details className="optional-details mt-5">
+          <details className="optional-details mt-5" hidden={!Boolean(mode || selectedMode)}>
             <summary>补充比赛信息（可选）</summary>
             <div className="mt-5 grid gap-4 sm:grid-cols-2">
               <div>
@@ -268,7 +267,7 @@ export default function MatchNew() {
             </div>
           </details>
 
-          <p className="mt-4 text-center text-xs text-[var(--text-muted)]">文件只在选择真实分析后上传；演示复盘不上传视频。</p>
+          <p className="mt-4 text-center text-xs text-[var(--text-muted)]">当前为本地演示流程，真实分析待接入。</p></>)}
         </section>
       </div>
     </div>

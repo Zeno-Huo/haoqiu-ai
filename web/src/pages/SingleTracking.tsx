@@ -96,9 +96,9 @@ export default function SingleTracking() {
     <div className="page-shell px-4 py-10">
       <div className="mx-auto max-w-5xl">
         <header className="mb-7">
-          <p className="eyebrow">单人跟拍 · YOLO 目标检测</p>
+          <p className="eyebrow">单人跟拍 · 次入口</p>
           <h1 className="mt-2 text-3xl font-semibold text-[var(--text-primary)]">{success ? '选择本次跟拍对象' : failed ? '单人跟拍未完成' : '正在建立单人候选'}</h1>
-          <p className="mt-2 max-w-3xl text-sm leading-6 text-[var(--text-muted)]">使用与深度复盘相同的 GPU 检测链路。先完整读取视频并生成候选，再由你确认要持续观察的那一名球员。</p>
+          <p className="mt-2 max-w-3xl text-sm leading-6 text-[var(--text-muted)]">用于单名球员的补充观察；当前仅保留次入口，分析结果仍待接入。</p>
         </header>
 
         {!configured ? <section className="panel p-6"><h2 className="text-lg font-semibold text-[var(--text-primary)]">未配置云端检测服务</h2><p className="mt-2 text-sm text-[var(--text-muted)]">单人跟拍需连接 HAI 的 YOLO 服务后才能创建任务。</p><Link className="btn-primary mt-5" to="/match/new?mode=single">重新选择视频</Link></section> : (

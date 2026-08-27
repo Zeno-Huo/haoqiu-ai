@@ -11,6 +11,7 @@ import IdentifyPlayers from './pages/IdentifyPlayers'
 import MyTeam from './pages/MyTeam'
 import SingleTracking from './pages/SingleTracking'
 import NotFound from './pages/NotFound'
+import TrainingResult from './pages/TrainingResult'
 
 export default function App() {
   return (
@@ -24,6 +25,7 @@ export default function App() {
         <Route path="/match/:id/tracking" element={<SingleTracking />} />
         <Route path="/team" element={<MyTeam />} />
         <Route path="/match/:id/analyzing" element={<Analyzing />} />
+        <Route path="/match/:id/training" element={<TrainingResult />} />
         <Route path="/match/:id/identify" element={<IdentifyPlayers />} />
         <Route path="/match/:id" element={<MatchReport />} />
         <Route path="*" element={<NotFound />} />

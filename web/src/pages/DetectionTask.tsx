@@ -173,15 +173,15 @@ export default function DetectionTask() {
     <div className="page-shell px-4 py-10">
       <div className="mx-auto max-w-3xl">
         <header className="mb-7">
-          <p className="eyebrow">深度复盘 · GPU 逐帧检测</p>
+          <p className="eyebrow">深度复盘 · 次入口</p>
           <h1 className="mt-2 text-3xl font-semibold text-[var(--text-primary)]">{success ? '深度复盘已完成' : terminalFailure ? '深度复盘失败' : '正在检测画面中的球员候选'}</h1>
-          <p className="mt-2 text-sm leading-6 text-[var(--text-muted)]">分析时间较长，仅适用赛后复盘以及球员成长。完整视频直传私有存储；此处不生成比分、控球率、传球、抢断或球员身份。</p>
+            <p className="mt-2 text-sm leading-6 text-[var(--text-muted)]">用于需要更完整画面处理的赛后复盘；当前服务不可用时可直接查看球队复盘 Demo。</p>
         </header>
 
         {!configured ? (
           <section className="panel p-6">
-            <h2 className="text-lg font-semibold text-[var(--text-primary)]">未配置云端分析服务</h2>
-            <p className="mt-2 text-sm leading-6 text-[var(--text-muted)]">当前网页未指向可用的 CloudBase 云函数。前端不会保存 COS 密钥或长期令牌。</p>
+            <h2 className="text-lg font-semibold text-[var(--text-primary)]">深度复盘暂不可用</h2>
+            <p className="mt-2 text-sm leading-6 text-[var(--text-muted)]">分析没有完成，请再试一次；也可以查看球队复盘 Demo。</p>
             <div className="mt-6 flex flex-wrap gap-3"><Link className="btn-secondary" to={'/match/' + initialMatch.id + '/quality'}>返回画面检查</Link><button className="btn-primary" onClick={() => navigate('/match/' + initialMatch.id + '/analyzing')}>查看球队复盘 Demo</button></div>
           </section>
         ) : (

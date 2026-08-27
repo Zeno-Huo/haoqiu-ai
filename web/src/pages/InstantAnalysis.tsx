@@ -150,8 +150,8 @@ export default function InstantAnalysis() {
 
         {!configured ? (
           <section className="panel p-6">
-            <h2 className="text-lg font-semibold text-[var(--text-primary)]">未配置云端分析服务</h2>
-            <p className="mt-2 text-sm leading-6 text-[var(--text-muted)]">当前网页未指向可用的 CloudBase 云函数。</p>
+            <h2 className="text-lg font-semibold text-[var(--text-primary)]">分析暂时不可用</h2>
+            <p className="mt-2 text-sm leading-6 text-[var(--text-muted)]">分析没有完成，请再试一次。</p>
             <div className="mt-6 flex flex-wrap gap-3"><Link className="btn-secondary" to={'/match/' + initialMatch.id + '/quality'}>返回画面检查</Link></div>
           </section>
         ) : (
@@ -201,8 +201,8 @@ export default function InstantAnalysis() {
             {success && (
               <div className="mt-6 space-y-5">
                 <dl className="grid gap-px overflow-hidden rounded-md border border-[var(--line)] bg-[var(--line)] sm:grid-cols-2">
-                  <div className="bg-[var(--content)] p-4"><dt className="text-xs text-[var(--text-muted)]">分析模型</dt><dd className="mt-2 text-sm font-medium text-[var(--text-primary)]">{job.text_result?.model || job.model?.name || '视觉大模型'}</dd></div>
-                  <div className="bg-[var(--content)] p-4"><dt className="text-xs text-[var(--text-muted)]">生成时间</dt><dd className="mt-2 font-score text-sm text-[var(--text-primary)]">{job.text_result?.generated_at ? new Date(job.text_result.generated_at).toLocaleString('zh-CN') : job.completed_at ? new Date(job.completed_at).toLocaleString('zh-CN') : '刚刚'}</dd></div>
+                  <div className="bg-[var(--content)] p-4"><dt className="text-xs text-[var(--text-muted)]">复盘状态</dt><dd className="mt-2 text-sm font-medium text-[var(--text-primary)]">已准备</dd></div>
+                  <div className="bg-[var(--content)] p-4"><dt className="text-xs text-[var(--text-muted)]">数据边界</dt><dd className="mt-2 text-sm font-medium text-[var(--text-primary)]">结果仅供参考</dd></div>
                 </dl>
 
                 {job.warnings && job.warnings.length > 0 && (

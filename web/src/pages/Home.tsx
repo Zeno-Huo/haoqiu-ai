@@ -1,100 +1,245 @@
+import { useEffect, useRef } from 'react'
 import { Link } from 'react-router-dom'
-import { getTeamProfile, listMatches } from '../lib/storage'
+import { listMatches } from '../lib/storage'
 import { formatDate } from '../lib/utils'
 import type { Match } from '../types'
 
-function RecentMatches({ matches }: { matches: Match[] }) {
-  if (!matches.length) return null
+type Dot = {
+  x: number
+  y: number
+  z: number
+  size: number
+  phase: number
+}
+
+type DeviceOrientationEventConstructor = typeof DeviceOrientationEvent & {
+  requestPermission?: () => Promise<'granted' | 'denied'>
+}
+
+function ParticleSphere() {
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+
+  useEffect(() => {
+    const canvas = canvasRef.current
+    const context = canvas?.getContext('2d')
+    if (!canvas || !context) return
+
+    const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches
+    const isMobile = innerWidth < 640
+    const dotCount = reducedMotion ? 180 : isMobile ? 620 : 1100
+    const dots: Dot[] = Array.from({ length: dotCount }, (_, index) => {
+      const z = 1 - (2 * (index + 0.5)) / dotCount
+      const angle = index * 2.399963
+      const radius = Math.sqrt(1 - z * z)
+
+      return {
+        x: radius * Math.cos(angle),
+        y: z,
+        z: radius * Math.sin(angle),
+        size: 0.45 + (index % 6) * 0.18,
+        phase: (index % 37) / 37,
+      }
+    })
+
+    let width = 0
+    let height = 0
+    let animationFrame = 0
+    let lastFrame = 0
+    let targetX = 0
+    let targetY = 0
+    let currentX = 0
+    let currentY = 0
+    let orientationAttached = false
+
+    const resize = () => {
+      const density = Math.min(devicePixelRatio || 1, 2)
+      width = canvas.clientWidth
+      height = canvas.clientHeight
+      canvas.width = width * density
+      canvas.height = height * density
+      context.setTransform(density, 0, 0, density, 0, 0)
+    }
+
+    const handlePointerMove = (event: PointerEvent) => {
+      const bounds = canvas.getBoundingClientRect()
+      targetX = ((event.clientX - bounds.left) / bounds.width - 0.5) * 0.28
+      targetY = ((event.clientY - bounds.top) / bounds.height - 0.5) * 0.16
+    }
+
+    const handleOrientation = (event: DeviceOrientationEvent) => {
+      if (event.gamma == null && event.beta == null) return
+      targetX = Math.max(-0.14, Math.min(0.14, ((event.gamma || 0) / 8) * 0.14))
+      targetY = Math.max(-0.1, Math.min(0.1, (((event.beta || 0) - 45) / 8) * 0.1))
+    }
+
+    const attachOrientation = () => {
+      if (orientationAttached) return
+      addEventListener('deviceorientation', handleOrientation)
+      orientationAttached = true
+    }
+
+    const enableOrientation = async () => {
+      if (typeof DeviceOrientationEvent === 'undefined') return
+      const orientationEvent = DeviceOrientationEvent as DeviceOrientationEventConstructor
+
+      if (typeof orientationEvent.requestPermission !== 'function') {
+        attachOrientation()
+        return
+      }
+
+      try {
+        if ((await orientationEvent.requestPermission()) === 'granted') attachOrientation()
+      } catch {
+        // Permission can be declined; automatic rotation remains available.
+      }
+    }
+
+    const project = (x: number, y: number, z: number, rotation: number, radius: number) => {
+      const angle = rotation + currentX
+      const cosine = Math.cos(angle)
+      const sine = Math.sin(angle)
+      const rotatedX = x * cosine - z * sine
+      const rotatedZ = x * sine + z * cosine
+      const rotatedY = y * Math.cos(currentY) - rotatedZ * Math.sin(currentY)
+      const depth = y * Math.sin(currentY) + rotatedZ * Math.cos(currentY)
+      const scale = 1 + depth * 0.2
+
+      return {
+        x: width * 0.54 + rotatedX * radius * scale,
+        y: height * 0.4 + rotatedY * radius * scale,
+        z: depth,
+        scale,
+      }
+    }
+
+    const draw = (time: number) => {
+      animationFrame = requestAnimationFrame(draw)
+      if (!reducedMotion && time - lastFrame < 33) return
+      lastFrame = time
+
+      const rotation = reducedMotion ? 0 : time * 0.00018
+      currentX += (targetX - currentX) * 0.06
+      currentY += (targetY - currentY) * 0.06
+      context.clearRect(0, 0, width, height)
+
+      const radius = Math.min(width, height) * (isMobile ? 0.31 : 0.34)
+      const projectedDots = dots
+        .map((dot) => ({ ...project(dot.x, dot.y, dot.z, rotation, radius), dot }))
+        .sort((a, b) => a.z - b.z)
+
+      projectedDots.forEach((item) => {
+        const drift = reducedMotion ? 0 : Math.sin((time * 0.001 + item.dot.phase) * 2) * 0.7
+        context.fillStyle = `rgba(101,214,176,${0.12 + (item.z + 1) * 0.32})`
+        context.beginPath()
+        context.arc(item.x, item.y, item.dot.size * item.scale + drift * 0.08, 0, Math.PI * 2)
+        context.fill()
+      })
+
+      const drawShell = (tilt: number, opacity: number) => {
+        context.strokeStyle = `rgba(101,214,176,${opacity})`
+        context.lineWidth = 0.7
+        context.beginPath()
+
+        for (let index = 0; index < 130; index += 1) {
+          const angle = (index / 129) * Math.PI * 2 + tilt
+          const point = project(
+            Math.cos(angle),
+            Math.sin(angle) * 0.86,
+            Math.sin(angle) * 0.18,
+            rotation,
+            radius,
+          )
+          if (index === 0) context.moveTo(point.x, point.y)
+          else context.lineTo(point.x, point.y)
+        }
+
+        context.stroke()
+      }
+
+      drawShell(0.4, 0.32)
+      drawShell(2.4, 0.18)
+
+      context.strokeStyle = 'rgba(230,163,90,.34)'
+      context.lineWidth = 1
+      context.beginPath()
+      for (let index = 26; index < 94; index += 1) {
+        const angle = (index / 129) * Math.PI * 2 + 1.2
+        const point = project(
+          Math.cos(angle) * 1.01,
+          Math.sin(angle) * 0.72,
+          Math.sin(angle) * 0.96,
+          rotation,
+          radius,
+        )
+        if (index === 26) context.moveTo(point.x, point.y)
+        else context.lineTo(point.x, point.y)
+      }
+      context.stroke()
+    }
+
+    resize()
+    addEventListener('resize', resize)
+    addEventListener('pointermove', handlePointerMove)
+
+    if (typeof DeviceOrientationEvent !== 'undefined') {
+      const orientationEvent = DeviceOrientationEvent as DeviceOrientationEventConstructor
+      if (typeof orientationEvent.requestPermission === 'function') {
+        addEventListener('pointerdown', enableOrientation, { once: true })
+      } else {
+        attachOrientation()
+      }
+    }
+
+    draw(0)
+
+    return () => {
+      cancelAnimationFrame(animationFrame)
+      removeEventListener('resize', resize)
+      removeEventListener('pointermove', handlePointerMove)
+      removeEventListener('pointerdown', enableOrientation)
+      if (orientationAttached) removeEventListener('deviceorientation', handleOrientation)
+    }
+  }, [])
+
+  return <canvas ref={canvasRef} className="particle-sphere-canvas" aria-hidden="true" />
+}
+
+function Recent({ matches }: { matches: Match[] }) {
   return (
-    <section className="mt-14">
-      <div className="mb-4 flex items-center justify-between">
-        <h2 className="section-title">最近复盘</h2>
-        <Link to="/match/new" className="text-sm text-[var(--ai)]">上传新视频 →</Link>
-      </div>
-      <div className="grid gap-3 sm:grid-cols-2">
-        {matches.slice(0, 4).map((match) => (
-          <Link key={match.id} to={match.analysis ? `/match/${match.id}` : `/match/${match.id}/analyzing`} className="panel panel-interactive flex items-center justify-between gap-4 p-4">
-            <div className="min-w-0">
-              <p className="truncate font-medium text-[var(--text-primary)]">{match.name}</p>
-              <p className="mt-1 text-xs text-[var(--text-muted)]">{formatDate(match.date)} · {match.type} · {match.players.length} 个候选</p>
-            </div>
-            <span className="status-text"><span className="status-dot" />{match.analysis ? '已出复盘' : '待分析'}</span>
-          </Link>
-        ))}
-      </div>
-    </section>
+    <details className="home-recent">
+      <summary className="home-recent-heading">
+        <h2>最近复盘</h2>
+        <span aria-hidden>⌄</span>
+      </summary>
+      {matches.length > 0 && (
+        <div className="home-recent-list">
+          {matches.slice(0, 4).map((match) => (
+            <Link key={match.id} to={`/match/${match.id}`} className="home-recent-row">
+              <span className="home-recent-match">{match.videoName || match.name}</span>
+              <span>{formatDate(match.date)}</span>
+              <span className="home-recent-view">查看</span>
+            </Link>
+          ))}
+        </div>
+      )}
+    </details>
   )
 }
 
 export default function Home() {
-  const matches = listMatches()
-  const team = getTeamProfile()
-  const preview = team.members.slice(0, 6)
-
   return (
-    <div className="page-shell">
-      <section className="home-hero">
-        <div className="mx-auto max-w-5xl px-4 py-10 sm:py-12">
-          <div className="max-w-2xl animate-in">
-            <h1 className="text-3xl font-semibold leading-tight tracking-tight text-[var(--text-primary)] sm:text-5xl">上传视频，马上分析</h1>
-          </div>
-        </div>
-      </section>
-
-      <section className="mx-auto max-w-5xl px-4 py-10">
-        <section className="mb-12">
-          <div className="grid gap-4 lg:grid-cols-3">
-            <article className="panel border-[var(--ai)] p-6">
-              <span className="font-score text-2xl font-bold text-[var(--ai)]">01</span>
-              <h3 className="mt-2 text-xl font-semibold text-[var(--ai)]">即时分析</h3>
-              <p className="mt-2 text-sm leading-6 text-[var(--text-muted)]">快速统计比赛数据，辅助教练在比赛中决策。</p>
-              <Link to="/match/new?mode=instant" className="btn-primary mt-5 w-full justify-center">开始即时分析 <span aria-hidden>→</span></Link>
-            </article>
-            <article className="panel border-[var(--ai)] p-6">
-              <span className="font-score text-2xl font-bold text-[var(--ai)]">02</span>
-              <h3 className="mt-2 text-xl font-semibold text-[var(--ai)]">深度复盘</h3>
-              <p className="mt-2 text-sm leading-6 text-[var(--text-muted)]">分析时间较长，仅适用赛后复盘以及球员成长。</p>
-              <Link to="/match/new?mode=deep" className="btn-secondary mt-5 w-full justify-center">开始深度复盘 <span aria-hidden>→</span></Link>
-            </article>
-            <article className="panel border-[var(--ai)] p-6">
-              <span className="font-score text-2xl font-bold text-[var(--ai)]">03</span>
-              <h3 className="mt-2 text-xl font-semibold text-[var(--ai)]">单人跟拍</h3>
-              <p className="mt-2 text-sm leading-6 text-[var(--text-muted)]">从一段训练或比赛视频中选择一名球员，沉淀其动作片段与观察记录。</p>
-              <Link to="/match/new?mode=single" className="btn-secondary mt-5 w-full justify-center">开始单人跟拍 <span aria-hidden>→</span></Link>
-            </article>
+    <div className="page-shell home-page">
+      <main className="home-content">
+        <section className="sphere-stage">
+          <ParticleSphere />
+          <div className="sphere-actions">
+            <Link to="/match/new" className="sphere-cta">
+              选择分析模式 <span aria-hidden>→</span>
+            </Link>
           </div>
         </section>
-
-        <section className="panel mb-10 p-5 sm:flex sm:items-center sm:justify-between sm:gap-6 sm:p-6">
-          <div>
-            <p className="field-label !mb-2">我的球队</p>
-            <h2 className="text-xl font-semibold text-[var(--text-primary)]">{team.name}</h2>
-            <p className="mt-1 text-sm text-[var(--text-muted)]">{team.members.length} 名预存成员 · 姓名、昵称、常用号码和位置只用作确认线索</p>
-            {preview.length > 0 && (
-              <div className="team-preview mt-4">
-                {preview.map((member) => <span key={member.id}>{member.nickname || member.name}{member.commonNumber ? ` · ${member.commonNumber}号` : ''}</span>)}
-                {team.members.length > preview.length && <span>+{team.members.length - preview.length}</span>}
-              </div>
-            )}
-          </div>
-          <Link to="/team" className="btn-secondary mt-5 shrink-0 sm:mt-0">{team.members.length ? '管理成员' : '添加球队成员'}</Link>
-        </section>
-
-        <div className="grid gap-px overflow-hidden border border-[var(--line)] bg-[var(--line)] sm:grid-cols-3">
-          {[
-            ['选择视频', '本地读取时长、画幅等信息，不会上传文件。'],
-            ['画面检查', '查看本地演示可继续或建议重拍的提示。'],
-            ['进入复盘 Demo', '查看现有球队看板样例，数据会明确标注为演示。'],
-          ].map(([title, description], index) => (
-            <div key={title} className="bg-[var(--surface)] p-6">
-              <span className="font-score text-sm text-[var(--ai)]">0{index + 1}</span>
-              <h2 className="mt-8 text-lg font-medium text-[var(--text-primary)]">{title}</h2>
-              <p className="mt-2 text-sm leading-6 text-[var(--text-muted)]">{description}</p>
-            </div>
-          ))}
-        </div>
-        <RecentMatches matches={matches} />
-      </section>
+        <Recent matches={listMatches()} />
+      </main>
     </div>
   )
 }
