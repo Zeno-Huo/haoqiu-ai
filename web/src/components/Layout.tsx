@@ -4,12 +4,7 @@ import { Link } from 'react-router-dom'
 function Logo() {
   return (
     <span className="inline-flex items-center gap-2">
-      <span className="grid h-8 w-8 place-items-center rounded-md border border-[var(--ai)]/50 bg-[var(--ai)]/10">
-        <svg viewBox="0 0 32 32" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.8">
-          <circle cx="12" cy="17" r="4.5" fill="currentColor" stroke="none" />
-          <path d="M4 24c5-10 11-13 24-13M17 7c5 2 7 5 8 10M21 5v5h5" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
-      </span>
+      <img src="/haoqiu-logo.png" alt="" className="layout-logo" />
       <span className="text-lg font-bold tracking-tight text-[var(--text-primary)]">
         好球<span className="text-[var(--ai)]">Ai</span>
       </span>
