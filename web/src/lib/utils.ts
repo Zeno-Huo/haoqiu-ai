@@ -1,13 +1,5 @@
 // 通用工具函数
 
-/** 秒 → mm:ss */
-export function formatTime(seconds: number): string {
-  const s = Math.max(0, Math.floor(seconds))
-  const m = Math.floor(s / 60)
-  const r = s % 60
-  return `${m}:${r.toString().padStart(2, '0')}`
-}
-
 /** 秒 → 中文时长，如 12 分 30 秒 */
 export function formatDuration(seconds: number): string {
   const m = Math.floor(seconds / 60)
