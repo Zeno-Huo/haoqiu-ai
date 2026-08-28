@@ -45,8 +45,9 @@ export const loadConfig = (): Config => ({
   workerUrlSeconds: Math.min(integer("WORKER_URL_SECONDS", 4 * 60 * 60), 6 * 60 * 60),
   rawRetentionDays: integer("RAW_RETENTION_DAYS", 7),
   resultRetentionDays: integer("RESULT_RETENTION_DAYS", 30),
-  maxUploadBytes: 300 * 1024 * 1024,
-  maxDurationSeconds: 15 * 60,
+  // 硬限制放宽：超过 150MB / 5 分钟的视频由 haoqiu-vlm 自动压缩，不再直接拒绝用户
+  maxUploadBytes: 1024 * 1024 * 1024,
+  maxDurationSeconds: 20 * 60,
   maxLeaseSeconds: Math.min(integer("MAX_LEASE_SECONDS", 120), 300),
   workerToken: process.env.WORKER_API_TOKEN,
   allowTestIdentity: process.env.ALLOW_TEST_IDENTITY === "true" && process.env.NODE_ENV !== "production",
