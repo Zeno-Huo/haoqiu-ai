@@ -60,12 +60,6 @@ function ParticleSphere() {
       context.setTransform(density, 0, 0, density, 0, 0)
     }
 
-    const handlePointerMove = (event: PointerEvent) => {
-      const bounds = canvas.getBoundingClientRect()
-      targetX = ((event.clientX - bounds.left) / bounds.width - 0.5) * 0.28
-      targetY = ((event.clientY - bounds.top) / bounds.height - 0.5) * 0.16
-    }
-
     const handleOrientation = (event: DeviceOrientationEvent) => {
       if (event.gamma == null && event.beta == null) return
       targetX = Math.max(-0.14, Math.min(0.14, ((event.gamma || 0) / 8) * 0.14))
@@ -197,12 +191,13 @@ function ParticleSphere() {
 
     resize()
     addEventListener('resize', resize)
-    addEventListener('pointermove', handlePointerMove)
 
     if (typeof DeviceOrientationEvent !== 'undefined') {
       const orientationEvent = DeviceOrientationEvent as DeviceOrientationEventConstructor
       if (typeof orientationEvent.requestPermission === 'function') {
-        addEventListener('pointerdown', enableOrientation, { once: true })
+        // iOS requires a user gesture for sensor permission; keep this touch-only
+        // so desktop mouse interactions never become part of the home experience.
+        addEventListener('touchstart', enableOrientation, { once: true, passive: true })
       } else {
         attachOrientation()
       }
@@ -213,8 +208,7 @@ function ParticleSphere() {
     return () => {
       cancelAnimationFrame(animationFrame)
       removeEventListener('resize', resize)
-      removeEventListener('pointermove', handlePointerMove)
-      removeEventListener('pointerdown', enableOrientation)
+      removeEventListener('touchstart', enableOrientation)
       if (orientationAttached) removeEventListener('deviceorientation', handleOrientation)
     }
   }, [])
@@ -227,7 +221,6 @@ function Recent({ matches }: { matches: Match[] }) {
     <details className="home-recent">
       <summary className="home-recent-heading">
         <h2>历史复盘</h2>
-        <span aria-hidden>⌄</span>
       </summary>
       {matches.length > 0 && (
         <div className="home-recent-list">
@@ -246,8 +239,26 @@ function Recent({ matches }: { matches: Match[] }) {
 
 export default function Home() {
   const modes = [
-    { index: '01', label: '即时分析', kicker: '看球队', note: '几分钟看懂场面、亮点和问题', mode: 'instant' },
-    { index: '02', label: '个人分析', kicker: '看自己', note: '分析比赛表现或训练动作', mode: 'personal' },
+    {
+      index: '01',
+      label: '比赛分析',
+      kicker: '看球队',
+      note: '快速总结，辅助决策',
+      features: ['战术分析', '数据统计', '关键事件'],
+      action: '上传视频，即刻分析',
+      mode: 'instant',
+      primary: true,
+    },
+    {
+      index: '02',
+      label: '个人分析',
+      kicker: '看自己',
+      note: 'AI动作追踪，深度分析，时间较长',
+      features: ['表现评分', '跑动热图', '技术统计'],
+      action: '上传个人跟拍视频',
+      mode: 'personal',
+      primary: false,
+    },
   ]
 
   return (
@@ -256,20 +267,36 @@ export default function Home() {
         <section className="sphere-stage">
           <ParticleSphere />
           <div className="home-hero-copy">
-            <h1 className="home-title"><span>业余足球</span><span>智能分析助手</span></h1>
-            <p className="home-value">看球队，或看自己</p>
+            <span className="home-kicker">✦&nbsp; 业余足球</span>
+            <h1 className="home-title"><span>AI</span>视频分析</h1>
+            <span className="home-title-rule" aria-hidden="true" />
+            <p className="home-value">上传足球视频，智能分析比赛与表现</p>
           </div>
         </section>
         <nav className="home-mode-grid" aria-label="分析方式">
-          {modes.map(({ index, label, kicker, note, mode }) => (
-            <Link key={mode} to={`/match/new?mode=${mode}`} className="home-mode-card">
-              <span className="home-mode-index" aria-hidden="true">{index}</span>
-              <span className="home-mode-copy">
-                <strong className="home-mode-label">{label}</strong>
-                <b className="home-mode-kicker">{kicker}</b>
-                <span className="home-mode-note">{note}</span>
+          {modes.map(({ index, label, kicker, note, features, action, mode, primary }) => (
+            <Link key={mode} to={`/match/new?mode=${mode}`} className={`home-mode-card ${primary ? 'is-primary' : ''}`}>
+              <span className="home-mode-top">
+                <span className="home-mode-index" aria-hidden="true">{index}</span>
+                <b className="home-mode-kicker">{kicker} <span aria-hidden="true">›</span></b>
               </span>
-              <span className="home-mode-arrow" aria-hidden="true">↗</span>
+              <span className="home-mode-detail">
+                <span className={`home-mode-icon ${mode}`} aria-hidden="true">
+                  {mode === 'instant' ? (
+                    <svg viewBox="0 0 56 56" fill="none"><rect x="7" y="32" width="9" height="15" rx="2" /><rect x="23" y="21" width="9" height="26" rx="2" /><rect x="39" y="10" width="9" height="37" rx="2" /></svg>
+                  ) : (
+                    <svg viewBox="0 0 56 56" fill="none"><circle cx="28" cy="19" r="9" /><path d="M12 47c1-10 7-16 16-16s15 6 16 16" /></svg>
+                  )}
+                </span>
+                <span className="home-mode-copy">
+                  <strong className="home-mode-label">{label}</strong>
+                  <span className="home-mode-note">{note}</span>
+                  <span className="home-mode-features">
+                    {features.map((feature) => <span key={feature}>{feature}</span>)}
+                  </span>
+                  <span className="home-mode-action">{action}<span aria-hidden="true">→</span></span>
+                </span>
+              </span>
             </Link>
           ))}
         </nav>

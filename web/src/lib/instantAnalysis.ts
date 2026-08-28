@@ -6,8 +6,11 @@ export interface InstantPair {
 }
 
 export interface InstantSummary {
+  overall?: string
   highlight?: string
   weakness?: string
+  recommendation?: string
+  /** 兼容旧接口中的下一步关注字段。 */
   focus?: string
 }
 
@@ -165,7 +168,7 @@ export function normalizeInstantDashboard(value: unknown): InstantAnalysisDashbo
   const awayTeam = object(first(teams, ['away', '客队', '对方']))
   const matchScore = first(match, ['score', '比分'])
   const nestedPossession = homeTeam || awayTeam ? { home: first(homeTeam, ['possession_pct', 'possession', '控球率']), away: first(awayTeam, ['possession_pct', 'possession', '控球率']) } : undefined
-  const nestedShots = homeTeam || awayTeam ? { home: first(homeTeam, ['shots', '射门']), away: first(awayTeam, ['shots', '射门']) } : undefined
+  const nestedShots = homeTeam || awayTeam ? { home: first(homeTeam, ['shots', 'shots_on_target', '明显射门', '射门']), away: first(awayTeam, ['shots', 'shots_on_target', '明显射门', '射门']) } : undefined
   const summarySource = object(first(source, ['summary', 'team_summary', '球队总结', '观察']))
   const playersValue = first(source, ['players', 'player_cards', 'player_analysis', '球员'])
   const eventsValue = first(source, ['events', 'timeline', 'event_timeline', '事件时间线'])
@@ -173,12 +176,14 @@ export function normalizeInstantDashboard(value: unknown): InstantAnalysisDashbo
   const result: InstantAnalysisDashboard = {
     score: pair(first(source, ['score', '比分'])) || pair(matchScore),
     possession: pair(first(source, ['possession', 'possession_rate', '控球率'])) || pair(nestedPossession),
-    shots: pair(first(source, ['shots', '射门'])) || pair(nestedShots),
+    shots: pair(first(source, ['shots', 'clear_shots', 'shots_on_target', '明显射门', '射门'])) || pair(nestedShots),
     teamAverage: number(first(source, ['teamAverage', 'team_average', 'average_score', '球队平均分'])) || number(first(homeTeam, ['average_score', 'averageScore', '球队平均分'])),
     summary: {
-      highlight: text(first(summarySource, ['highlight', 'headline', '亮点', '最大亮点'])),
-      weakness: text(first(summarySource, ['weakness', 'shortcoming', '不足', '最大不足'])),
-      focus: text(first(summarySource, ['focus', 'next_focus', '关注', '下一轮关注'])),
+      overall: text(first(summarySource, ['overall', 'overall_review', 'headline', '一句话总评', '总评', 'summary', '总结'])) || text(first(source, ['overall', 'overall_review', '一句话总评', '总评', 'summary', '总结'])),
+      highlight: text(first(summarySource, ['highlight', '亮点', '最大亮点'])) || text(first(source, ['highlight', '亮点', '最大亮点'])),
+      weakness: text(first(summarySource, ['weakness', 'shortcoming', '不足', '最大不足'])) || text(first(source, ['weakness', 'shortcoming', '不足', '最大不足'])),
+      recommendation: text(first(summarySource, ['recommendation', 'next_step', 'next_phase', '下一阶段建议', '下一步建议'])) || text(first(source, ['recommendation', 'next_step', 'next_phase', '下一阶段建议', '下一步建议'])),
+      focus: text(first(summarySource, ['focus', 'next_focus', '关注', '下一轮关注'])) || text(first(source, ['focus', 'next_focus', '关注', '下一轮关注'])),
     },
     teamStats: stats(teamStatsValue),
     players: Array.isArray(playersValue) ? playersValue.map(player) : [],

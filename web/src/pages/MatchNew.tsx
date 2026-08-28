@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import { Link, useNavigate, useSearchParams } from 'react-router-dom'
+import { Navigate, Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { getTeamProfile, listMatches, newId, saveMatch } from '../lib/storage'
 import { cacheVideoFile } from '../lib/videoFileCache'
 import type { Match, Player } from '../types'
@@ -38,18 +38,12 @@ export default function MatchNew() {
   const [error, setError] = useState('')
 
   if (!requestedMode) {
-    return <div className="page-shell mode-page"><div className="mode-page-inner">
-      <header className="mode-page-header"><h1>你想看什么？</h1><p>先选球队，还是自己。</p></header>
-      <section className="product-choice-grid">
-        <Link to="/match/new?mode=instant" className="product-choice is-primary"><span>01</span><strong>即时分析</strong><b>看球队</b><p>几分钟看懂场面、亮点和问题</p><i>立即分析 →</i></Link>
-        <Link to="/match/new?mode=personal" className="product-choice"><span>02</span><strong>个人分析</strong><b>看自己</b><p>分析你的比赛表现或训练动作</p><i>分析自己 →</i></Link>
-      </section>
-    </div></div>
+    return <Navigate to="/" replace />
   }
 
   if (requestedMode === 'personal') {
     return <div className="page-shell mode-page"><div className="mode-page-inner">
-      <Link className="flow-back" to="/match/new">← 返回</Link>
+      <Link className="flow-back" to="/">← 首页</Link>
       <header className="mode-page-header"><h1>个人分析</h1><p>这段视频拍的是什么？</p></header>
       <section className="product-choice-grid">
         <Link to="/match/new?mode=single" className="product-choice"><span>01</span><strong>个人比赛</strong><b>看本场表现</b><p>关键片段、亮点、问题和本场称号</p><i>选择比赛 →</i></Link>
@@ -127,7 +121,7 @@ export default function MatchNew() {
   }
 
   return <div className="page-shell px-4 py-8"><div className="mx-auto max-w-2xl">
-    <Link className="flow-back" to={mode === 'instant' ? '/match/new' : '/match/new?mode=personal'}>← 返回</Link>
+    <Link className="flow-back" to={mode === 'instant' ? '/' : '/match/new?mode=personal'}>← 返回</Link>
     <header className="flow-header"><h1>{modeCopy.title}</h1><p>{modeCopy.subtitle}</p></header>
     <section className="panel p-5 sm:p-6">
       <div className="source-tabs"><button type="button" className={source === 'new' ? 'is-active' : ''} onClick={() => setSource('new')}>新视频</button><button type="button" className={source === 'previous' ? 'is-active' : ''} onClick={() => setSource('previous')}>历史视频</button></div>
