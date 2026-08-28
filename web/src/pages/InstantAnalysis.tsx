@@ -80,7 +80,7 @@ export default function InstantAnalysis() {
       {!success && !failed && <section className="analysis-progress"><div><i style={{ width: `${progress}%` }} /></div><p><span>{stage}</span><b>{progress}%</b></p></section>}
       {message && <section className="analysis-error"><p>{message}</p><button className="btn-secondary" onClick={() => setRetryNonce((value) => value + 1)}>再试一次</button></section>}
       {failed && <section className="analysis-error"><p>{job?.error?.message || '这次分析没有完成'}</p><Link className="btn-primary" to="/match/new?mode=instant">重新选择视频</Link></section>}
-      {success && (parsed.dashboard ? <InstantDashboard dashboard={parsed.dashboard} /> : parsed.narrative ? <Narrative content={parsed.narrative} /> : <section className="panel p-6"><h2>结果正在整理</h2></section>)}
+      {success && (parsed.dashboard ? <InstantDashboard dashboard={parsed.dashboard} matchId={initialMatch.id} /> : parsed.narrative ? <Narrative content={parsed.narrative} /> : <section className="panel p-6"><h2>结果正在整理</h2></section>)}
       {success && <div className="analysis-actions"><button className="btn-secondary" type="button" onClick={() => void (navigator.share ? navigator.share({ title: '好球 Ai 比赛战报', text: parsed.narrative || '我的比赛战报已经完成', url: location.href }) : navigator.clipboard.writeText(location.href))}>分享战报</button><Link className="btn-primary" to="/match/new?mode=instant">再分析一段</Link></div>}
     </>}
   </div></div>
