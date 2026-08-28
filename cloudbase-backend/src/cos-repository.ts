@@ -61,6 +61,8 @@ export class CosRepository implements TaskRepository {
     const tasks = await this.listAllTasks();
     const eligible = tasks
       .filter((t) => {
+        // 即时分析(instant)只走 haoqiu-vlm 云函数，禁止 HAI GPU worker 领取，避免重复处理/竞态。
+        if (t.mode === "instant") return false;
         const status = t.status;
         const availableAt = iso(t.available_at);
         const leaseExpiresAt = iso(t.lease_expires_at);
