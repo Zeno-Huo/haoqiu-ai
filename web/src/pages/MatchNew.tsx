@@ -36,6 +36,7 @@ export default function MatchNew() {
   const [targetNickname, setTargetNickname] = useState('')
   const [trainingAction, setTrainingAction] = useState('')
   const [error, setError] = useState('')
+  const [notice, setNotice] = useState('')
 
   if (!requestedMode) {
     return <Navigate to="/" replace />
@@ -68,12 +69,20 @@ export default function MatchNew() {
     setError('')
   }
 
+  // 系统会自动压缩，所以这里只挡真正离谱的文件（1GB / 20 分钟）
+  const HARD_MAX_BYTES = 1024 * 1024 * 1024
+  const HARD_MAX_SECONDS = 20 * 60
+  // 超过这个值会走云端压缩，提前告诉用户
+  const AUTO_COMPRESS_BYTES = 150 * 1024 * 1024
+  const AUTO_COMPRESS_SECONDS = 5 * 60
+
   function selectFile(file?: File) {
     const token = ++probeTokenRef.current
     setError('')
+    setNotice('')
     if (!file) return
     if (!/\.(mp4|mov)$/i.test(file.name)) { setError('请选择 MP4 或 MOV 视频'); setVideoState('error'); return }
-    if (file.size > 300 * 1024 * 1024) { setError('视频不能超过 300MB'); setVideoState('error'); return }
+    if (file.size > HARD_MAX_BYTES) { setError('视频不能超过 1GB'); setVideoState('error'); return }
     setSelectedFile(file)
     setPreviousMatch(undefined)
     setVideoName(file.name)
@@ -84,10 +93,13 @@ export default function MatchNew() {
     probe.preload = 'metadata'
     probe.onloadedmetadata = () => {
       if (token !== probeTokenRef.current) return URL.revokeObjectURL(url)
-      if (probe.duration > 15 * 60) {
-        setSelectedFile(undefined); setVideoName(''); setVideoMeta(undefined); setVideoState('error'); setError('请上传 15 分钟以内的视频')
+      if (probe.duration > HARD_MAX_SECONDS) {
+        setSelectedFile(undefined); setVideoName(''); setVideoMeta(undefined); setVideoState('error'); setError('请上传 20 分钟以内的视频')
       } else {
         setVideoMeta({ sizeBytes: file.size, durationSeconds: probe.duration, width: probe.videoWidth, height: probe.videoHeight })
+        if (file.size > AUTO_COMPRESS_BYTES || probe.duration > AUTO_COMPRESS_SECONDS) {
+          setNotice('视频超过 5 分钟 / 150MB，上传后会自动压缩到 5 分钟再分析（只分析前 5 分钟）')
+        }
         setVideoState('ready')
       }
       URL.revokeObjectURL(url)
@@ -136,6 +148,7 @@ export default function MatchNew() {
         {mode === 'training' && <><label className="field-label">训练动作</label><div className="action-options">{['停球','传球','带球','射门'].map((action) => <button type="button" key={action} className={trainingAction === action ? 'is-active' : ''} onClick={() => setTrainingAction(action)}>{action}</button>)}</div></>}
       </div>}
       {error && <p className="flow-error">{error}</p>}
+      {!error && notice && <p className="flow-notice">{notice}</p>}
       <button className="btn-primary mt-6 w-full" type="button" disabled={!canStart} onClick={start}>{modeCopy.start} →</button>
     </section>
   </div></div>
