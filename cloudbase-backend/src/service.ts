@@ -26,8 +26,8 @@ export class TaskService {
     const contentType = String(body.content_type || "video/mp4").toLowerCase();
     const size = number(body.size_bytes, "size_bytes");
     const duration = number(body.duration_seconds, "duration_seconds");
-    if (size > this.config.maxUploadBytes) throw new ApiError(413, "VIDEO_TOO_LARGE", "视频不得超过 300MB");
-    if (duration > this.config.maxDurationSeconds) throw new ApiError(422, "VIDEO_TOO_LONG", "视频不得超过 15 分钟");
+    if (size > this.config.maxUploadBytes) throw new ApiError(413, "VIDEO_TOO_LARGE", "视频不得超过 1GB");
+    if (duration > this.config.maxDurationSeconds) throw new ApiError(422, "VIDEO_TOO_LONG", "视频不得超过 20 分钟");
     if (!["video/mp4", "video/quicktime"].includes(contentType)) throw new ApiError(415, "UNSUPPORTED_VIDEO", "仅支持 MP4/MOV");
     const uploadId = id("task");
     const inputKey = `inputs/${ownerId}/${uploadId}/source${safeExtension(filename)}`;
