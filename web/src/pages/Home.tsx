@@ -1,7 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { Link } from 'react-router-dom'
 import { listMatches } from '../lib/storage'
-import { formatDate } from '../lib/utils'
 import type { Match } from '../types'
 
 type Dot = {
@@ -216,24 +215,14 @@ function ParticleSphere() {
   return <canvas ref={canvasRef} className="particle-sphere-canvas" aria-hidden="true" />
 }
 
+/** 右上角入口：点击直接进 /history 二级页面（不做下拉展开）。 */
 function Recent({ matches }: { matches: Match[] }) {
   return (
-    <details className="home-recent">
-      <summary className="home-recent-heading">
-        <h2>历史复盘</h2>
-      </summary>
-      {matches.length > 0 && (
-        <div className="home-recent-list">
-          {matches.slice(0, 4).map((match) => (
-            <Link key={match.id} to={`/match/${match.id}`} className="home-recent-row">
-              <span className="home-recent-match">{match.videoName || match.name}</span>
-              <span>{formatDate(match.date)}</span>
-              <span className="home-recent-view">查看</span>
-            </Link>
-          ))}
-        </div>
-      )}
-    </details>
+    <Link to="/history" className="home-recent">
+      <span>历史复盘</span>
+      <b>{matches.length > 0 ? `${matches.length} 场` : '查看'}</b>
+      <i aria-hidden="true">→</i>
+    </Link>
   )
 }
 

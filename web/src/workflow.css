@@ -39,7 +39,9 @@
 
 .home-content {
   position: relative;
-  z-index: 1;
+  /* header 是 z-30（relative），main 内 .home-recent 用 top:-45px 推到 header 区域；
+     这里 z-index 必须 > 30，否则 header 的堆叠上下文会吃掉点击。 */
+  z-index: 31;
   max-width: 920px;
   margin: 0 auto;
   padding: 0 24px 30px;
@@ -205,13 +207,29 @@
 .home-mode-action span { font-size: 28px; font-weight: 400; line-height: 1; }
 .home-mode-card.is-primary .home-mode-action { border-color: rgba(166,255,226,.34); background: linear-gradient(105deg, #2ebc98, #64d8bd); color: #04100e; box-shadow: 0 6px 14px rgba(45,188,152,.1), inset 0 1px rgba(235,255,248,.32); }
 
+/* 历史复盘：悬浮在首页右上角（用户指定的位置，不要挪动）。
+   z-index 必须高过 Layout header 的 z-30——top:-45px 会把它推进 header 区域，
+   层级不够时 header（全宽透明）会静默吃掉点击：看得见但点不动。 */
 .home-page .home-recent {
   position: absolute;
   top: -45px;
   right: 24px;
-  z-index: 20;
-  width: auto;
+  z-index: 40;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  padding: 0 14px;
+  border: 1px solid var(--line);
+  border-radius: 99px;
+  background: rgba(16, 31, 32, .92);
+  color: var(--text-primary);
+  font-size: 13px;
+  white-space: nowrap;
 }
+.home-page .home-recent:hover { border-color: rgba(101, 214, 176, .55); }
+.home-recent b { color: var(--ai); font-size: 12px; font-weight: 500; }
+.home-recent i { color: var(--ai); font-size: 13px; font-style: normal; }
 
 .home-footer {
   padding: 20px 16px 28px;
@@ -352,79 +370,7 @@ body { overflow-x: hidden; }
   font-weight: 600;
 }
 
-.home-recent-heading {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  min-height: 32px;
-  margin: 0;
-  border: 0;
-  border-radius: 0;
-  padding: 0;
-  background: transparent;
-  backdrop-filter: none;
-  cursor: pointer;
-  list-style: none;
-}
-
-.home-recent-heading::-webkit-details-marker {
-  display: none;
-}
-
-.home-recent-heading h2 {
-  margin: 0;
-  color: var(--text-primary);
-  font-size: 15px;
-  font-weight: 650;
-}
-
-.home-recent-heading span {
-  color: var(--text-muted);
-  font-size: 16px;
-}
-
-.home-recent-list {
-  margin-top: 8px;
-  overflow: hidden;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  background: rgba(16, 31, 32, .96);
-  border-top: 1px solid var(--line);
-}
-
-.home-recent:not([open]) .home-recent-list {
-  display: none;
-}
-
-.home-recent-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 92px 38px;
-  gap: 10px;
-  align-items: center;
-  padding: 14px 2px;
-  border-bottom: 1px solid var(--line);
-  color: var(--text-secondary);
-  font-size: 13px;
-}
-
-.home-recent-match {
-  overflow: hidden;
-  color: var(--text-primary);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.home-recent-view {
-  color: var(--ai);
-  text-align: right;
-}
-
-@media (max-width: 640px) {
-  .home-recent-row {
-    grid-template-columns: minmax(0, 1fr) 78px 32px;
-    font-size: 12px;
-  }
-}
+/* 原下拉列表样式已移除：历史复盘改为点击直接跳 /history 二级页面，列表样式见下方 .history-* */
 
 /* Product framework: team first, personal second. */
 
@@ -585,4 +531,48 @@ body { overflow-x: hidden; }
     grid-template-columns: 1fr;
     gap: 6px;
   }
+}
+
+/* ---------- 历史复盘页 /history ---------- */
+.history-head { margin-bottom: 22px; }
+.history-back { color: var(--text-muted); font-size: 13px; }
+.history-back:hover { color: var(--ai); }
+.history-head h1 { margin: 10px 0 6px; font-size: 26px; letter-spacing: -.02em; }
+.history-head p { margin: 0; color: var(--text-muted); font-size: 13px; }
+.history-tools { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.history-tools .btn-secondary, .history-tools .btn-danger { min-height: 38px; padding: 8px 14px; font-size: 13px; }
+.btn-danger { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 44px; border: 1px solid var(--danger); border-radius: 6px; padding: 10px 16px; font-size: 14px; font-weight: 600; background: var(--danger); color: #0B1113; }
+.btn-danger:hover { background: #ec9489; }
+.btn-danger:disabled { cursor: not-allowed; opacity: .45; }
+.history-check { display: inline-flex; align-items: center; }
+.history-check input { width: 18px; height: 18px; accent-color: var(--ai); cursor: pointer; }
+
+.history-list { display: grid; gap: 12px; }
+.history-card { display: grid; gap: 12px; border: 1px solid var(--line); border-radius: 14px; padding: 16px 18px; background: var(--surface); }
+.history-card.is-batch { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.history-card.is-batch .history-card-main { flex: 1 1 200px; min-width: 0; }
+.history-card.is-batch .history-actions { flex: 0 0 auto; }
+.history-card-main h2 { margin: 0; overflow: hidden; color: var(--text-primary); font-size: 16px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.history-meta { margin: 6px 0 0; color: var(--text-muted); font-size: 12px; }
+.history-tags { display: flex; flex-wrap: wrap; gap: 8px; }
+.history-kind, .history-status { border-radius: 99px; padding: 4px 10px; font-size: 11px; }
+.history-kind.is-instant { background: rgba(101, 214, 176, .14); color: var(--ai); }
+.history-kind.is-report { background: rgba(120, 170, 255, .12); color: #6f9cf5; }
+.history-kind.is-pending { background: rgba(255, 196, 90, .12); color: #d99a2b; }
+.history-status.is-done { border: 1px solid var(--line); color: var(--text-secondary); }
+.history-status.is-running { border: 1px solid rgba(101, 214, 176, .4); color: var(--ai); }
+.history-status.is-failed { border: 1px solid rgba(227, 122, 112, .4); color: var(--danger); }
+.history-status.is-idle { border: 1px solid var(--line); color: var(--text-muted); }
+.history-actions { display: flex; gap: 10px; }
+.history-actions .btn-primary, .history-actions .btn-secondary { flex: 1; min-height: 42px; font-size: 13px; }
+
+.history-empty { border: 1px dashed var(--line); border-radius: 14px; padding: 34px 22px; background: var(--surface); text-align: center; }
+.history-empty h2 { margin: 0; color: var(--text-primary); font-size: 17px; }
+.history-empty p { margin: 8px 0 18px; color: var(--text-muted); font-size: 13px; }
+
+
+@media (min-width: 720px) {
+  .history-card { grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 18px; }
+  .history-actions { justify-content: flex-end; }
+  .history-actions .btn-primary, .history-actions .btn-secondary { flex: 0 0 auto; }
 }

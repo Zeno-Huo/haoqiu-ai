@@ -259,13 +259,14 @@ function buildPlayersPrompt(durationSec, ctx) {
 ${ctxPart}
 
 【任务】识别我方球员，并对每人写具体的表现点评。
-只列出你确实看清球衣号码、且真的能说出他做了什么的球员。最多 6 人。
+最多 6 人。优先列有清晰球衣号码的球员；如果某个焦点球员确实没有号码或看不清号码，也要列出，并按规则标注为"无号码球衣N"。
 
 【输出】只输出JSON（不要其他文字）：
 {
   "players": [
     {
       "number": "10",
+      "anonymous_index": null,
       "team": "home",
       "role": "进攻尖刀",
       "notes": [
@@ -280,7 +281,12 @@ ${ctxPart}
 }
 
 【字段要求】
-- number：球衣上清晰可辨的数字（字符串）。模糊、猜的都不要列。
+- number：球衣号码。
+  · 号码清晰可辨：写实际数字字符串，如 "10"。
+  · 确实没有号码或完全看不清：number 填 null，同时使用 anonymous_index 字段按顺序编号为 1、2、3...。
+    例如：一个无号码焦点球员 → number: null, anonymous_index: 1；第二个无号码焦点球员 → number: null, anonymous_index: 2。
+  · 严禁把无号码球员写成 "10""7" 这类虚假号码；严禁用 "无号码球衣1" 等字符串填充 number。
+- anonymous_index：number 为 null 时才需要。从 1 开始按出场顺序或重要性递增的整数。有真实号码的球员此字段可省略。
 - team：固定 "home"（我方）。
 - role：4~6 字的角色概括，必须从你看到的实际表现推断，例如：组织核心 / 进攻尖刀 / 边路快马 / 后场清扫 / 全能中场 / 定位球点。
   ⚠️ 不要写"前锋""中场""后卫""门将"这类笼统位置，也不要猜位置。
@@ -291,7 +297,7 @@ ${ctxPart}
 - tags：2~4 个 2~5 字关键词，从 notes 提炼（如"抢点积极""回防慢""一脚出球"）。
 - is_mvp：所有球员中表现最突出的一人写 true，其余写 false。只能有一个 true。
 
-如果视频里没有看清任何号码，players 返回空数组 []。`;
+如果视频里一个能说出具体表现的球员都没有，players 返回空数组 []。`;
 }
 
 function buildPassPrompt(durationSec, ctx) {
@@ -499,12 +505,30 @@ function mergeRoundsToDashboard(rounds, durationSec) {
   };
 
   const playerMap = {};
+  let nextAnonymousIndex = 1;
   if (playerRound && Array.isArray(playerRound.players)) {
     for (const p of playerRound.players) {
-      const num = cleanText(p.number);
-      if (!num) continue;
-      playerMap[num] = {
+      let num = cleanText(p.number);
+      let anonymousIndex = null;
+      // 兼容模型把无号码球员写成"无号码球衣N"字符串的兜底处理
+      if (!num) {
+        const fallback = String(p.number || "").match(/^无号码球衣(\d+)$/);
+        if (fallback) {
+          num = null;
+          anonymousIndex = Number(fallback[1]);
+        }
+      }
+      if (!num) {
+        // 无号码球员：用 anonymous_index 或按顺序生成编号
+        anonymousIndex = Number.isFinite(Number(p.anonymous_index)) && Number(p.anonymous_index) > 0
+          ? Number(p.anonymous_index)
+          : nextAnonymousIndex;
+        nextAnonymousIndex = Math.max(nextAnonymousIndex, Number(anonymousIndex) || 0) + 1;
+      }
+      const key = num || `无号码球衣${anonymousIndex}`;
+      playerMap[key] = {
         number: num,
+        anonymous_index: anonymousIndex,
         name: null,
         // 位置识别实测不可靠（会把后卫认成前锋），已彻底不再输出
         position: null,
@@ -520,6 +544,7 @@ function mergeRoundsToDashboard(rounds, durationSec) {
   }
 
   // 把事件归到球员 + 累加统计
+  // 无号码球员的 player_number 可能为 "无号码球衣N" 或 null；这里只匹配真实号码与无号码字符串键
   for (const [pn, pl] of Object.entries(playerMap)) {
     for (const evt of deduped) {
       if (evt.player_number && String(evt.player_number) === pn) pl.events.push({ ...evt });

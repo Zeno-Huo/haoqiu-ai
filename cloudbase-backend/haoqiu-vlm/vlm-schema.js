@@ -47,10 +47,26 @@ function normalizeTeam(value) {
 function normalizePlayer(value) {
   const player = asObject(value);
   const stats = asObject(player.stats);
+  let number = asNullableString(player.number);
+  let anonymousIndex = null;
+  if (!number) {
+    // 后端合并时会把无号码球员编码成"无号码球衣N"作为 number 键；前端统一展示即可
+    const match = typeof player.number === "string" ? player.number.match(/^无号码球衣(\d+)$/) : null;
+    if (match) {
+      number = player.number;
+      anonymousIndex = Number(match[1]);
+    }
+  }
+  if (!number && (Number.isFinite(player.anonymous_index) || Number.isFinite(player.anonymousIndex))) {
+    anonymousIndex = Number(player.anonymous_index || player.anonymousIndex);
+    number = `无号码球衣${anonymousIndex}`;
+  }
   return {
     ...player,
     id: asNullableString(player.id),
-    number: asNullableString(player.number),
+    number,
+    anonymous_index: anonymousIndex,
+    anonymousIndex,
     name: asNullableString(player.name),
     // 位置识别实测不可靠，统一置空，看板不再展示
     position: null,

@@ -81,13 +81,28 @@ function ScoreLine({ dashboard, matchId }: { dashboard: InstantAnalysisDashboard
   </section>
 }
 
+const UNNUMBERED_RE = /^无号码球衣(\d+)$/
+
+function formatUnnumbered(index?: number) {
+  if (index && index > 0) return `无号码球衣${index}`
+  return '无号码球衣'
+}
+
 function PlayerCard({ player, rank }: { player: InstantPlayer; rank: number }) {
   const notes = player.insights.length ? player.insights : player.highlight?.note ? [player.highlight.note] : []
+  const unnumberedMatch = player.number?.match(UNNUMBERED_RE)
+  const unnumberedIndex = player.anonymousIndex || (unnumberedMatch ? Number(unnumberedMatch[1]) : undefined)
+  const badgeText = unnumberedIndex ? '?' : (player.number || pad(rank))
+  const titleText = unnumberedIndex
+    ? `${formatUnnumbered(unnumberedIndex)}${player.name ? ` ${player.name}` : ''}`
+    : player.number
+      ? `${player.number}号${player.name ? ` ${player.name}` : ''}`
+      : (player.name || '焦点')
   return <article className={player.isMvp ? 'instant-player is-mvp' : 'instant-player'}>
     <header>
-      <span>{player.number ? player.number : pad(rank)}</span>
+      <span>{badgeText}</span>
       <div>
-        <h3>{player.number ? `${player.number}号` : player.name || '焦点球员'}{player.name && player.number ? ` ${player.name}` : ''}</h3>
+        <h3>{titleText}</h3>
         {player.role && <p className="instant-player-role">{player.role}</p>}
       </div>
       {player.isMvp && <em className="instant-player-mvp">本场最佳</em>}
@@ -126,7 +141,7 @@ export default function InstantDashboard({ dashboard, matchId }: { dashboard: In
       <header className="instant-section-head"><h2>焦点球员表现</h2><span>{players.length ? `${players.length} 人` : '暂无'}</span></header>
       {players.length
         ? <div className="instant-player-grid">{players.map((player, index) => <PlayerCard key={player.id} player={player} rank={index + 1} />)}</div>
-        : <p className="instant-empty">这段视频没有看清任何球衣号码，建议换更近或更清晰的机位。</p>}
+        : <p className="instant-empty">这段视频没有识别到任何焦点球员，建议换更近或更清晰的机位。</p>}
     </section>
     <section className="instant-priority-grid">
       <article className="is-good"><span>最大亮点</span><h3>{summary.highlight || '进攻推进更主动'}</h3></article>

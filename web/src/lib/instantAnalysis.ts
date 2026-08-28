@@ -33,6 +33,8 @@ export interface InstantPlayer {
   id: string
   name?: string
   number?: string
+  /** 无号码球员的顺序编号（从 1 开始）。有真实号码时为 undefined。 */
+  anonymousIndex?: number
   /** 从表现推断的角色（如"进攻尖刀"）。位置识别实测会认错，已不再使用。 */
   role?: string
   /** 2~4 个关键词标签。 */
@@ -150,6 +152,7 @@ function player(value: unknown, index: number): InstantPlayer {
     id: text(first(item, ['id', 'player_id', '球员'])) || `player-${index}`,
     name: text(first(item, ['name', '姓名'])),
     number: text(first(item, ['number', '号码'])),
+    anonymousIndex: number(first(item, ['anonymous_index', 'anonymousIndex', '无号码编号'])),
     role: text(first(item, ['role', '角色'])),
     tags,
     isMvp: first(item, ['is_mvp', 'isMvp', 'mvp']) === true,
