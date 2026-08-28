@@ -52,10 +52,15 @@ function normalizePlayer(value) {
     id: asNullableString(player.id),
     number: asNullableString(player.number),
     name: asNullableString(player.name),
-    position: asNullableString(player.position),
+    // 位置识别实测不可靠，统一置空，看板不再展示
+    position: null,
     score: asNullableNumber(player.score),
+    // role/tags/is_mvp 是"焦点球员表现"卡片的主要内容
+    role: asNullableString(player.role),
+    tags: asArray(player.tags).map(asNullableString).filter(Boolean).slice(0, 4),
+    is_mvp: player.is_mvp === true,
     stats: normalizeStats(stats, PLAYER_STAT_KEYS),
-    insights: asArray(player.insights),
+    insights: asArray(player.insights).map(asNullableString).filter(Boolean),
     events: asArray(player.events),
     title: asNullableString(player.title),
     highlight: player.highlight && typeof player.highlight === "object" ? { ...player.highlight } : null,
@@ -68,6 +73,8 @@ function normalizeEvent(value) {
   return {
     ...event,
     time_seconds: asNullableNumber(event.time_seconds),
+    // clock：画面记分牌读到的比赛时间文本（如 "23:41"），读不到为 null
+    clock: asNullableString(event.clock),
     type: asNullableString(event.type),
     team: asNullableString(event.team),
     player_id: asNullableString(event.player_id),
@@ -131,16 +138,28 @@ function deriveStatsFromEvents(dashboard) {
     if (team.shots == null && team.stats.shots != null) team.shots = team.stats.shots;
     if (team.score == null && team.stats.goals != null) team.score = team.stats.goals;
   }
-  // score 只接受与明确 goal 事件一致的值；没有 goal 事件不能凭空展示比分。
+  // score 有两个可信来源：
+  //   ① 画面记分牌（score_source === "scoreboard"）——正式比赛高机位直播有比分字幕条，实测可读且准确
+  //   ② 模型明确列出的 goal 事件
+  // 两者都没有时必须清空，不能凭空展示比分。
+  const fromScoreboard = String(dashboard.match.score_source || "").trim().toLowerCase() === "scoreboard";
+  const scoreboardComplete = fromScoreboard
+    && typeof dashboard.match.score.home === "number"
+    && typeof dashboard.match.score.away === "number";
   const goals = { home: byTeam.home.goal || 0, away: byTeam.away.goal || 0 };
   const hasGoal = goals.home + goals.away > 0;
-  if (!hasGoal) {
-    dashboard.match.score.home = null;
-    dashboard.match.score.away = null;
-  } else {
+  if (scoreboardComplete) {
+    // 记分牌优先，不被事件推导覆盖
+    if (!dashboard.notes.includes("比分读自画面记分牌")) dashboard.notes.push("比分读自画面记分牌");
+  } else if (hasGoal) {
+    dashboard.match.score_source = "events";
     for (const key of ["home", "away"]) {
       if (dashboard.match.score[key] == null) dashboard.match.score[key] = goals[key];
     }
+  } else {
+    dashboard.match.score.home = null;
+    dashboard.match.score.away = null;
+    dashboard.match.score_source = "unknown";
   }
   if (!dashboard.notes.includes("团队数字仅由已列出的视觉事件汇总")) dashboard.notes.push("团队数字仅由已列出的视觉事件汇总");
   return dashboard;
@@ -162,6 +181,9 @@ function normalizeDashboard(value) {
       ...match,
       name: asNullableString(match.name),
       duration_seconds: asNullableNumber(match.duration_seconds),
+      // scoreboard=读自画面记分牌 / events=由 goal 事件推导 / unknown=未识别（前端提示手动补充）
+      score_source: asNullableString(match.score_source) || "unknown",
+      score_note: asNullableString(match.score_note),
       score: {
         ...score,
         home: asNullableNumber(score.home),
