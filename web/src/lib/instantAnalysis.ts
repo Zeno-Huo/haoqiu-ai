@@ -33,7 +33,12 @@ export interface InstantPlayer {
   id: string
   name?: string
   number?: string
-  position?: string
+  /** 从表现推断的角色（如"进攻尖刀"）。位置识别实测会认错，已不再使用。 */
+  role?: string
+  /** 2~4 个关键词标签。 */
+  tags: string[]
+  /** 本场最佳。 */
+  isMvp: boolean
   score?: number
   title?: string
   highlight?: { label?: string; value?: number; note?: string }
@@ -43,15 +48,22 @@ export interface InstantPlayer {
 }
 
 export interface InstantEvent {
+  /** 视频内秒数。 */
   time?: number
+  /** 画面记分牌读到的比赛时间文本（如 "23:41"），读不到为空。 */
+  clock?: string
   label?: string
   type?: string
   note?: string
 }
 
+/** 比分来源：记分牌读取 / 由进球事件推导 / 未识别（可手动补充）。 */
+export type InstantScoreSource = 'scoreboard' | 'events' | 'unknown'
+
 export interface InstantAnalysisDashboard {
   score?: InstantPair
-  possession?: InstantPair
+  scoreSource: InstantScoreSource
+  scoreNote?: string
   shots?: InstantPair
   teamAverage?: number
   summary: InstantSummary
@@ -118,8 +130,10 @@ function event(value: unknown): InstantEvent {
   const item = object(value)
   if (!item) return { label: text(value) }
   return {
-    time: number(first(item, ['time', 'timestamp', 'seconds', '时间'])),
-    label: text(first(item, ['label', 'title', 'type', '事件'])) || text(first(item, ['note', 'description', '说明'])),
+    time: number(first(item, ['time', 'time_seconds', 'timestamp', 'seconds', '时间'])),
+    clock: text(first(item, ['clock', 'match_clock', 'game_clock', '比赛时间'])),
+    // 描述优先于类型：note 更具体（"远射偏出"胜过 "shot"）
+    label: text(first(item, ['note', 'description', '说明'])) || text(first(item, ['label', 'title', '事件'])),
     type: text(first(item, ['type', 'event_type', '事件'])),
     note: text(first(item, ['note', 'description', '说明'])),
   }
@@ -127,14 +141,18 @@ function event(value: unknown): InstantEvent {
 
 function player(value: unknown, index: number): InstantPlayer {
   const item = object(value) || {}
-  const insightValue = first(item, ['insights', 'insight', '观察', '特点'])
+  const insightValue = first(item, ['insights', 'insight', 'notes', 'note', '观察', '特点', '点评'])
   const insights = Array.isArray(insightValue) ? insightValue.map(text).filter((item): item is string => Boolean(item)) : [text(insightValue)].filter((item): item is string => Boolean(item))
+  const tagValue = first(item, ['tags', 'keywords', '标签'])
+  const tags = (Array.isArray(tagValue) ? tagValue.map(text) : [text(tagValue)]).filter((item): item is string => Boolean(item)).slice(0, 4)
   const eventValue = first(item, ['events', 'timeline', '事件时间线', '时间线'])
   return {
     id: text(first(item, ['id', 'player_id', '球员'])) || `player-${index}`,
     name: text(first(item, ['name', '姓名'])),
     number: text(first(item, ['number', '号码'])),
-    position: text(first(item, ['position', '位置'])),
+    role: text(first(item, ['role', '角色'])),
+    tags,
+    isMvp: first(item, ['is_mvp', 'isMvp', 'mvp']) === true,
     score: number(first(item, ['score', 'rating', '评分'])),
     title: text(first(item, ['title', '称号'])),
     highlight: (() => {
@@ -167,7 +185,8 @@ export function normalizeInstantDashboard(value: unknown): InstantAnalysisDashbo
   const homeTeam = object(first(teams, ['home', '主队', '我方']))
   const awayTeam = object(first(teams, ['away', '客队', '对方']))
   const matchScore = first(match, ['score', '比分'])
-  const nestedPossession = homeTeam || awayTeam ? { home: first(homeTeam, ['possession_pct', 'possession', '控球率']), away: first(awayTeam, ['possession_pct', 'possession', '控球率']) } : undefined
+  const scoreSourceRaw = text(first(match, ['score_source', 'scoreSource'])) || text(first(source, ['score_source', 'scoreSource']))
+  const scoreSource: InstantScoreSource = scoreSourceRaw === 'scoreboard' ? 'scoreboard' : scoreSourceRaw === 'events' ? 'events' : 'unknown'
   const nestedShots = homeTeam || awayTeam ? { home: first(homeTeam, ['shots', 'shots_on_target', '明显射门', '射门']), away: first(awayTeam, ['shots', 'shots_on_target', '明显射门', '射门']) } : undefined
   const summarySource = object(first(source, ['summary', 'team_summary', '球队总结', '观察']))
   const playersValue = first(source, ['players', 'player_cards', 'player_analysis', '球员'])
@@ -175,7 +194,8 @@ export function normalizeInstantDashboard(value: unknown): InstantAnalysisDashbo
   const teamStatsValue = first(source, ['teamStats', 'team_stats', '球队数据', 'stats']) ?? first(homeTeam, ['stats', '球队数据'])
   const result: InstantAnalysisDashboard = {
     score: pair(first(source, ['score', '比分'])) || pair(matchScore),
-    possession: pair(first(source, ['possession', 'possession_rate', '控球率'])) || pair(nestedPossession),
+    scoreSource,
+    scoreNote: text(first(match, ['score_note', 'scoreNote'])),
     shots: pair(first(source, ['shots', 'clear_shots', 'shots_on_target', '明显射门', '射门'])) || pair(nestedShots),
     teamAverage: number(first(source, ['teamAverage', 'team_average', 'average_score', '球队平均分'])) || number(first(homeTeam, ['average_score', 'averageScore', '球队平均分'])),
     summary: {
@@ -189,7 +209,7 @@ export function normalizeInstantDashboard(value: unknown): InstantAnalysisDashbo
     players: Array.isArray(playersValue) ? playersValue.map(player) : [],
     events: Array.isArray(eventsValue) ? eventsValue.map(event) : [],
   }
-  const hasData = Boolean(result.score || result.possession || result.shots || result.teamAverage || result.players.length || result.events.length || Object.keys(result.teamStats).length || Object.values(result.summary).some(Boolean))
+  const hasData = Boolean(result.score || result.shots || result.teamAverage || result.players.length || result.events.length || Object.keys(result.teamStats).length || Object.values(result.summary).some(Boolean))
   return hasData ? result : undefined
 }
 
