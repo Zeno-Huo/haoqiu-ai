@@ -14,7 +14,7 @@ function candidatesFor(job?: CloudDetectionJob): Candidate[] {
   return Array.from({ length: count }, (_, index) => ({
     id: `candidate-${index + 1}`,
     title: `候选 ${String(index + 1).padStart(2, '0')}`,
-    clue: index === 0 ? '画面出现较稳定 · 建议优先确认' : '由检测框连续出现生成的候选',
+    clue: index === 0 ? '画面出现较稳定' : '在多个画面中出现',
   }))
 }
 
@@ -84,7 +84,7 @@ export default function SingleTracking() {
   const progress = job ? job.progress : uploadProgress
   const detection = job ? buildDetectionStats(job) : undefined
   const candidates = candidatesFor(job)
-  const stage = job?.stage === 'detecting' ? '正在读取整段视频中的球员候选' : job?.stage === 'rendering' ? '正在生成带框检测视频' : job?.status === 'queued' ? '等待 GPU 任务' : job ? '单人跟拍处理中' : UPLOAD_PHASE_LABELS[phase]
+  const stage = job?.stage === 'detecting' ? '正在找出画面中的你' : job?.stage === 'rendering' ? '正在整理个人片段' : job?.status === 'queued' ? '正在等待分析' : job ? '正在分析个人表现' : UPLOAD_PHASE_LABELS[phase]
 
   function confirmCandidate(candidateId: string) {
     setSelected(candidateId)
@@ -96,22 +96,22 @@ export default function SingleTracking() {
     <div className="page-shell px-4 py-10">
       <div className="mx-auto max-w-5xl">
         <header className="mb-7">
-          <p className="eyebrow">单人跟拍 · 次入口</p>
-          <h1 className="mt-2 text-3xl font-semibold text-[var(--text-primary)]">{success ? '选择本次跟拍对象' : failed ? '单人跟拍未完成' : '正在建立单人候选'}</h1>
-          <p className="mt-2 max-w-3xl text-sm leading-6 text-[var(--text-muted)]">用于单名球员的补充观察；当前仅保留次入口，分析结果仍待接入。</p>
+          <p className="eyebrow">个人比赛</p>
+          <h1 className="mt-2 text-3xl font-semibold text-[var(--text-primary)]">{success ? '确认画面中的你' : failed ? '分析没有完成' : '正在找出画面中的你'}</h1>
+          <p className="mt-2 max-w-3xl text-sm leading-6 text-[var(--text-muted)]">确认后，我们会围绕这一名球员整理表现。</p>
         </header>
 
-        {!configured ? <section className="panel p-6"><h2 className="text-lg font-semibold text-[var(--text-primary)]">未配置云端检测服务</h2><p className="mt-2 text-sm text-[var(--text-muted)]">单人跟拍需连接 HAI 的 YOLO 服务后才能创建任务。</p><Link className="btn-primary mt-5" to="/match/new?mode=single">重新选择视频</Link></section> : (
+        {!configured ? <section className="panel p-6"><h2 className="text-lg font-semibold text-[var(--text-primary)]">个人分析暂时不可用</h2><Link className="btn-primary mt-5" to="/match/new?mode=single">重新选择视频</Link></section> : (
           <section className="panel p-5 sm:p-6">
-            <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="font-medium text-[var(--text-primary)]">{initialMatch.videoName}</p><p className="mt-1 font-score text-xs text-[var(--text-muted)]">{job?.job_id ? `任务 ${job.job_id}` : '等待安全上传信息'}</p></div><span className="status-text"><span className="status-dot" />{job?.status ?? phase}</span></div>
+            <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="font-medium text-[var(--text-primary)]">{initialMatch.videoName}</p></div><span className="status-text"><span className="status-dot" />{success ? '已完成' : '分析中'}</span></div>
             {!success && !failed && <><div className="mt-7 h-2 overflow-hidden rounded-full bg-[var(--surface-raised)]"><div className="h-full rounded-full bg-[var(--ai)] transition-[width] duration-300" style={{ width: `${Math.max(0, Math.min(100, progress))}%` }} /></div><div className="mt-3 flex justify-between text-sm text-[var(--text-secondary)]"><span>{stage}</span><b className="font-score text-[var(--ai)]">{progress}%</b></div></>}
             {message && <div className="mt-6 rounded-md border border-[var(--attack)] bg-[var(--content)] p-4 text-sm text-[var(--attack)]">{message}<Link className="btn-secondary mt-4" to="/match/new?mode=single">重新选择视频</Link></div>}
-            {failed && <div className="mt-6 rounded-md border border-[var(--danger)] bg-[var(--content)] p-4"><p className="text-sm text-[var(--danger)]">{job?.error?.message || 'YOLO 检测任务未能完成'}</p><Link className="btn-secondary mt-4" to="/match/new?mode=single">重新选择视频</Link></div>}
+            {failed && <div className="mt-6 rounded-md border border-[var(--danger)] bg-[var(--content)] p-4"><p className="text-sm text-[var(--danger)]">{job?.error?.message || '个人分析没有完成'}</p><Link className="btn-secondary mt-4" to="/match/new?mode=single">重新选择视频</Link></div>}
             {success && <div className="mt-7 grid gap-5 lg:grid-cols-[minmax(0,1.3fr)_minmax(300px,0.7fr)]">
-              <div className="rounded-md border border-[var(--line)] bg-[var(--content)] p-4"><div className="flex items-center justify-between gap-3"><h2 className="text-base font-semibold text-[var(--text-primary)]">带框检测视频</h2><span className="text-xs text-[var(--text-muted)]">完整视频已处理</span></div>{resultVideo ? <video className="mt-4 w-full rounded-md border border-[var(--line)] bg-black" controls preload="metadata" src={resultVideo.url} /> : <p className="mt-4 rounded-md border border-[var(--line)] p-4 text-sm text-[var(--text-muted)]">正在取得短期播放地址…</p>}<p className="mt-3 text-xs leading-5 text-[var(--text-muted)]">在视频中暂停到目标球员清晰出现的时刻，再确认候选对象。</p></div>
-              <div className="rounded-md border border-[var(--ai)] bg-[var(--content)] p-4"><p className="text-sm font-semibold text-[var(--text-primary)]">确认跟拍对象</p><p className="mt-1 text-xs leading-5 text-[var(--text-muted)]">候选来自本次 YOLO 检测画面；确认后只把该对象作为本次训练观察的主角。</p><div className="mt-4 space-y-2">{candidates.map((candidate) => <button key={candidate.id} type="button" className={`w-full rounded-md border p-3 text-left transition ${selected === candidate.id ? 'border-[var(--ai)] bg-[var(--ai)]/10' : 'border-[var(--line)] hover:border-[var(--ai)]/50'}`} onClick={() => confirmCandidate(candidate.id)}><span className="flex items-center justify-between gap-3"><b className="text-sm text-[var(--text-primary)]">{candidate.title}</b><span className={selected === candidate.id ? 'text-xs text-[var(--ai)]' : 'text-xs text-[var(--text-muted)]'}>{selected === candidate.id ? '已选择' : '待确认'}</span></span><span className="mt-1 block text-xs text-[var(--text-muted)]">{candidate.clue}</span></button>)}</div>{selected && <div className="mt-4 border-t border-[var(--line)] pt-4"><p className="text-sm font-medium text-[var(--ai)]">{candidates.find((item) => item.id === selected)?.title} 已设为观察对象</p><p className="mt-2 text-xs leading-5 text-[var(--text-muted)]">本版已完成真实 YOLO 视频检测与对象确认。轨迹连续化、动作切片和训练建议将在跟踪层接入后写入本卡。</p></div>}</div>
+              <div className="rounded-md border border-[var(--line)] bg-[var(--content)] p-4"><div className="flex items-center justify-between gap-3"><h2 className="text-base font-semibold text-[var(--text-primary)]">比赛画面</h2></div>{resultVideo ? <video className="mt-4 w-full rounded-md border border-[var(--line)] bg-black" controls preload="metadata" src={resultVideo.url} /> : <p className="mt-4 rounded-md border border-[var(--line)] p-4 text-sm text-[var(--text-muted)]">正在准备画面…</p>}<p className="mt-3 text-xs leading-5 text-[var(--text-muted)]">暂停到你清晰出现的画面，再选择右侧候选。</p></div>
+              <div className="rounded-md border border-[var(--ai)] bg-[var(--content)] p-4"><p className="text-sm font-semibold text-[var(--text-primary)]">哪个是你？</p><div className="mt-4 space-y-2">{candidates.map((candidate) => <button key={candidate.id} type="button" className={`w-full rounded-md border p-3 text-left transition ${selected === candidate.id ? 'border-[var(--ai)] bg-[var(--ai)]/10' : 'border-[var(--line)] hover:border-[var(--ai)]/50'}`} onClick={() => confirmCandidate(candidate.id)}><span className="flex items-center justify-between gap-3"><b className="text-sm text-[var(--text-primary)]">{candidate.title}</b><span className={selected === candidate.id ? 'text-xs text-[var(--ai)]' : 'text-xs text-[var(--text-muted)]'}>{selected === candidate.id ? '已选择' : '选择'}</span></span><span className="mt-1 block text-xs text-[var(--text-muted)]">{candidate.clue}</span></button>)}</div>{selected && <div className="mt-4 border-t border-[var(--line)] pt-4"><p className="text-sm font-medium text-[var(--ai)]">已确认，正在整理你的表现</p></div>}</div>
             </div>}
-            {success && detection && <dl className="mt-5 grid grid-cols-2 gap-px overflow-hidden rounded-md border border-[var(--line)] bg-[var(--line)] sm:grid-cols-4"><div className="bg-[var(--content)] p-3"><dt className="text-xs text-[var(--text-muted)]">已处理帧</dt><dd className="mt-1 font-score text-[var(--ai)]">{detection.processedFrames}</dd></div><div className="bg-[var(--content)] p-3"><dt className="text-xs text-[var(--text-muted)]">球员检测帧</dt><dd className="mt-1 font-score text-[var(--text-primary)]">{detection.playerFrames}</dd></div><div className="bg-[var(--content)] p-3"><dt className="text-xs text-[var(--text-muted)]">球出现帧</dt><dd className="mt-1 font-score text-[var(--text-primary)]">{detection.ballFrames}</dd></div><div className="bg-[var(--content)] p-3"><dt className="text-xs text-[var(--text-muted)]">视频时长</dt><dd className="mt-1 font-score text-[var(--text-primary)]">{detection.durationSeconds ? `${Math.round(detection.durationSeconds)}s` : '—'}</dd></div></dl>}
+            {success && detection && <p className="mt-5 text-sm text-[var(--text-muted)]">已整理约 {Math.round(detection.durationSeconds || 0)} 秒比赛画面</p>}
           </section>
         )}
         <div className="mt-5"><Link className="btn-secondary" to="/">返回功能选择</Link></div>

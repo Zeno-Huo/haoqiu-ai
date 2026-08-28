@@ -1,7 +1,7 @@
 import type { InstantAnalysisDashboard, InstantEvent, InstantPair, InstantPlayer, InstantTeamStats } from '../lib/instantAnalysis'
 
-function value(value: number | undefined, suffix = ''): string {
-  return value === undefined ? '—' : `${value}${suffix}`
+function shown(value: number | undefined, suffix = ''): string {
+  return value === undefined ? '—' : `约 ${value}${suffix}`
 }
 
 function PairCard({ label, pair, suffix = '' }: { label: string; pair?: InstantPair; suffix?: string }) {
@@ -9,37 +9,43 @@ function PairCard({ label, pair, suffix = '' }: { label: string; pair?: InstantP
   const away = pair?.away
   const total = Math.max(1, (home ?? 0) + (away ?? 0))
   const width = home === undefined || away === undefined ? 50 : home / total * 100
-  return <article className="panel p-4"><div className="flex items-center justify-between text-sm font-semibold"><span>{label}</span><span className="text-xs font-normal text-[var(--text-muted)]">我方 / 对手</span></div><div className="mt-3 flex justify-between font-score text-2xl"><b className="text-[var(--ai)]">{value(home, suffix)}</b><b className="text-[var(--opponent)]">{value(away, suffix)}</b></div><div className="metric-track mt-3" aria-label={`${label}双方对比`}><i className="home" style={{ width: `${width}%` }} /><i className="away" style={{ width: `${100 - width}%` }} /></div></article>
+  return <article className="instant-pair"><span>{label}</span><div><b>{shown(home, suffix)}</b><i>我方</i><b>{shown(away, suffix)}</b></div><div className="metric-track"><i className="home" style={{ width: `${width}%` }} /><i className="away" style={{ width: `${100 - width}%` }} /></div></article>
 }
 
 const STAT_LABELS: Array<[keyof InstantTeamStats, string]> = [
-  ['touches', '总拿球'], ['passes', '总传球'], ['passesSuccess', '传球成功'], ['passErrors', '传球失误'],
-  ['shots', '总射门'], ['shotsOnTarget', '射正'], ['goals', '进球'], ['assists', '助攻'], ['turnovers', '其他失误'], ['dispossessed', '被断球'], ['interceptions', '拦截'], ['tackles', '抢断'],
+  ['touches', '拿球'], ['passes', '传球'], ['passesSuccess', '成功传球'], ['passErrors', '传球失误'],
+  ['shots', '射门'], ['shotsOnTarget', '射正'], ['goals', '进球'], ['turnovers', '失误'],
+  ['dispossessed', '被断'], ['interceptions', '拦截'], ['tackles', '抢断'],
 ]
-
-function StatList({ stats }: { stats: InstantTeamStats }) {
-  return <div className="mt-3 grid grid-cols-2 gap-px overflow-hidden rounded-md border border-[var(--line)] bg-[var(--line)] sm:grid-cols-5">{STAT_LABELS.map(([key, label]) => <div className="bg-[var(--surface)] p-3" key={key}><b className="block font-score text-lg text-[var(--ai)]">{value(stats[key])}</b><span className="mt-1 block text-xs text-[var(--text-muted)]">{label}</span></div>)}</div>
-}
 
 function time(value?: number): string {
   if (value === undefined) return '--:--'
   return `${String(Math.floor(value / 60)).padStart(2, '0')}:${String(Math.round(value % 60)).padStart(2, '0')}`
 }
 
-function EventList({ events, title = '事件时间线' }: { events: InstantEvent[]; title?: string }) {
-  if (!events.length) return <p className="mt-3 text-sm text-[var(--text-muted)]">暂无可展示的事件时间点。</p>
-  return <><h3 className="mt-4 text-sm font-semibold text-[var(--text-primary)]">{title}</h3><div className="event-list">{events.map((item, index) => <span className="event success" key={`${item.time ?? index}-${item.type ?? item.label ?? index}`}>{time(item.time)} · {item.label || item.type || item.note || '事件'}</span>)}</div></>
+function Events({ events }: { events: InstantEvent[] }) {
+  if (!events.length) return null
+  return <div className="instant-events">{events.map((item, index) => <span key={`${item.time ?? index}-${item.type ?? index}`}><b>{time(item.time)}</b>{item.label || item.type || item.note || '关键片段'}</span>)}</div>
 }
 
 function PlayerCard({ player }: { player: InstantPlayer }) {
-  const s = player.stats
-  const statItems: Array<[keyof InstantTeamStats, string]> = [['touches', '拿球'], ['passes', '传球'], ['passErrors', '传球失误'], ['dispossessed', '被断球'], ['shots', '射门'], ['shotsOnTarget', '射正'], ['goals', '进球'], ['assists', '助攻'], ['interceptions', '拦截'], ['tackles', '抢断']]
-  const highlight = player.highlight
-  const hasHighlight = Boolean(highlight && (highlight.label || highlight.value !== undefined || highlight.note))
-  return <article className="panel p-4"><header className="flex items-start justify-between gap-3 border-b border-[var(--line)] pb-3"><div><h3 className="text-base font-semibold text-[var(--text-primary)]"><span className="mr-2 font-score text-[var(--text-muted)]">{player.number || '?'}</span>{player.name || '候选球员'}</h3><div className="mt-2 flex flex-wrap gap-2">{player.position && <span className="inline-block rounded border border-[var(--line)] px-2 py-1 text-xs text-[var(--text-secondary)]">{player.position}</span>}{player.title && <span className="inline-block rounded border border-[var(--ai)]/50 bg-[var(--ai)]/10 px-2 py-1 text-xs text-[var(--ai)]">{player.title}</span>}</div></div><div className="text-right"><b className="font-score text-2xl text-[var(--ai)]">{value(player.score)}</b><span className="block text-[10px] text-[var(--text-muted)]">综合评分 / 10</span></div></header><div className="data-list">{statItems.map(([key, label]) => <span key={key}>{label} <b>{value(s[key])}</b></span>)}</div>{hasHighlight && <div className="mt-3 rounded border border-[var(--ai)]/30 bg-[var(--ai)]/5 p-3 text-sm text-[var(--text-secondary)]"><span className="text-xs text-[var(--ai)]">本场亮点</span><p className="mt-1 font-medium text-[var(--text-primary)]">{highlight?.label || '亮点'}{highlight?.value !== undefined && <b className="ml-2 font-score text-[var(--ai)]">{highlight.value}</b>}</p>{highlight?.note && <p className="mt-1 text-xs leading-5 text-[var(--text-muted)]">{highlight.note}</p>}</div>}{player.insights.slice(0, 3).map((item) => <p className="insight" key={item}>{item}</p>)}<EventList events={player.events} title="关联片段" /></article>
+  const stats = STAT_LABELS.filter(([key]) => player.stats[key] !== undefined).slice(0, 5)
+  return <article className="instant-player"><header><span>{player.number || '?'}</span><div><h3>{player.name || '焦点球员'}</h3><p>{player.title || player.position || '本场焦点'}</p></div>{player.score !== undefined && <b>{player.score}</b>}</header>{player.highlight?.note && <p>{player.highlight.note}</p>}{player.insights[0] && <p>{player.insights[0]}</p>}{stats.length > 0 && <div>{stats.map(([key, label]) => <span key={key}>{label}<b>{player.stats[key]}</b></span>)}</div>}<Events events={player.events} /></article>
 }
 
 export default function InstantDashboard({ dashboard }: { dashboard: InstantAnalysisDashboard }) {
   const summary = dashboard.summary
-  return <section className="mt-6 space-y-5" aria-label="即时分析结构化看板"><div className="rounded-md border border-[var(--ai)]/40 bg-[var(--content)] p-4"><div className="flex flex-wrap items-center justify-between gap-2"><h2 className="text-base font-semibold text-[var(--text-primary)]">球队即时复盘</h2><span className="status-text"><span className="status-dot" />VLM 实操数据</span></div><p className="mt-1 text-xs text-[var(--text-muted)]">以下字段来自视觉模型返回的结构化分析，不读取演示模式数据。</p></div><div className="grid gap-3 sm:grid-cols-2"><PairCard label="比分" pair={dashboard.score} /><PairCard label="控球率" pair={dashboard.possession} suffix="%" /><PairCard label="射门" pair={dashboard.shots} /></div>{dashboard.teamAverage !== undefined && <div className="panel flex items-center justify-between p-4"><span className="text-sm text-[var(--text-secondary)]">球队平均分</span><b className="font-score text-3xl text-[var(--ai)]">{value(dashboard.teamAverage)}</b></div>}<section><h2 className="section-title">球队观察</h2><div className="summary-grid"><article className="summary-item highlight"><h3>最大亮点</h3><p>{summary.highlight || '暂无模型观察'}</p></article><article className="summary-item weakness"><h3>最大不足</h3><p>{summary.weakness || '暂无模型观察'}</p></article><article className="summary-item focus"><h3>下一轮关注</h3><p>{summary.focus || '暂无模型观察'}</p></article></div></section><section><h2 className="section-title">全队数据</h2><StatList stats={dashboard.teamStats} /></section><section><h2 className="section-title">关键事件</h2><EventList events={dashboard.events} /></section><section><h2 className="section-title">球员表现</h2>{dashboard.players.length ? <div className="mt-3 grid gap-3 sm:grid-cols-2">{dashboard.players.map((player) => <PlayerCard key={player.id} player={player} />)}</div> : <p className="mt-3 text-sm text-[var(--text-muted)]">暂无球员卡数据。</p>}</section></section>
+  const focusPlayer = dashboard.players[0]
+  const headline = summary.highlight || '这段比赛，你们踢得很有冲劲。'
+  return <section className="instant-dashboard" aria-label="球队分析结果">
+    <header className="instant-verdict"><span>本段总评</span><h2>{headline}</h2><p>{summary.focus || '继续保持优势，同时留意暴露最明显的问题。'}</p></header>
+    <div className="instant-priority-grid">
+      <article className="is-good"><span>最大亮点</span><h3>{summary.highlight || '进攻推进更主动'}</h3></article>
+      <article className="is-risk"><span>最大问题</span><h3>{summary.weakness || '丢球后的保护不足'}</h3></article>
+      <article className="is-focus"><span>本段焦点</span><h3>{focusPlayer ? `${focusPlayer.number || ''}号 ${focusPlayer.title || focusPlayer.name || '焦点球员'}` : '等待焦点球员'}</h3></article>
+    </div>
+    <section className="instant-evidence"><h2>场面概览</h2><div className="instant-pairs"><PairCard label="比分" pair={dashboard.score} /><PairCard label="控球" pair={dashboard.possession} suffix="%" /><PairCard label="射门" pair={dashboard.shots} /></div></section>
+    <details className="instant-details"><summary>更多比赛数据</summary><div className="instant-stat-list">{STAT_LABELS.map(([key, label]) => dashboard.teamStats[key] !== undefined && <span key={key}><b>{dashboard.teamStats[key]}</b>{label}</span>)}</div><Events events={dashboard.events} /></details>
+    {dashboard.players.length > 0 && <details className="instant-details"><summary>球员表现</summary><div className="instant-player-grid">{dashboard.players.map((player) => <PlayerCard key={player.id} player={player} />)}</div></details>}
+  </section>
 }

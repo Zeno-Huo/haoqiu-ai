@@ -246,10 +246,8 @@ function Recent({ matches }: { matches: Match[] }) {
 
 export default function Home() {
   const modes = [
-    { index: '01', label: '即时分析', note: '赛中快速看重点', mode: 'instant' },
-    { index: '02', label: '深度复盘', note: '赛后完整看', mode: 'deep' },
-    { index: '03', label: '个人追踪', note: '观察一名球员', mode: 'single' },
-    { index: '04', label: '训练模式', note: '单人动作反馈', mode: 'training' },
+    { index: '01', label: '即时分析', kicker: '看球队', note: '几分钟看懂场面、亮点和问题', mode: 'instant' },
+    { index: '02', label: '个人分析', kicker: '看自己', note: '分析比赛表现或训练动作', mode: 'personal' },
   ]
 
   return (
@@ -259,18 +257,18 @@ export default function Home() {
           <ParticleSphere />
           <div className="home-hero-copy">
             <h1 className="home-title"><span>业余足球</span><span>智能分析助手</span></h1>
-            <div className="home-upload-wrap">
-              <Link className="home-upload-button" to="/match/new">上传视频 <span aria-hidden>↗</span></Link>
-              <span className="home-upload-note">上传足球视频，即刻分析</span>
-            </div>
+            <p className="home-value">看球队，或看自己</p>
           </div>
         </section>
-        <nav className="home-mode-grid" aria-label="复盘方式">
-          {modes.map(({ index, label, note, mode }) => (
+        <nav className="home-mode-grid" aria-label="分析方式">
+          {modes.map(({ index, label, kicker, note, mode }) => (
             <Link key={mode} to={`/match/new?mode=${mode}`} className="home-mode-card">
               <span className="home-mode-index" aria-hidden="true">{index}</span>
-              <span className="home-mode-label">{label}</span>
-              <span className="home-mode-note">{note}</span>
+              <span className="home-mode-copy">
+                <strong className="home-mode-label">{label}</strong>
+                <b className="home-mode-kicker">{kicker}</b>
+                <span className="home-mode-note">{note}</span>
+              </span>
               <span className="home-mode-arrow" aria-hidden="true">↗</span>
             </Link>
           ))}
