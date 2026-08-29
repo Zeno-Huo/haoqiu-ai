@@ -10,6 +10,8 @@ export const publicTask = (task: TaskRecord) => ({
   input: task.input,
   model: task.model,
   diagnostics: task.diagnostics,
+  events: task.events,
+  training: task.training,
   warnings: task.warnings,
   error: task.error,
   text_result: task.text_result,
@@ -31,7 +33,8 @@ export const workerTask = (task: ClaimedTask | null) => task && ({
   client_match_id: task.client_match_id, attempt: task.attempt, max_attempts: task.max_attempts,
   input_download_url: task.input_download_url, output_upload_url: task.output_upload_url,
   signed_url_expires_at: task.signed_url_expires_at,
-  input: task.input, status: task.status, progress: task.progress, stage: task.stage
+  input: task.input, status: task.status, progress: task.progress, stage: task.stage,
+  analysis_context: task.analysis_context
 });
 
 export const haiCompletionBody = (taskId: string, body: any, idempotencyKey?: string) => {

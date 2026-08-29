@@ -52,7 +52,7 @@ export class TaskService {
     };
   }
 
-  async confirmUpload(ownerId: string, uploadId: string, clientMatchId?: string, mode: "deep" | "single" = "deep"): Promise<TaskRecord> {
+  async confirmUpload(ownerId: string, uploadId: string, clientMatchId?: string, mode: "deep" | "single" = "deep", jerseyHint?: string, trainingItem?: string): Promise<TaskRecord> {
     const upload = await this.repo.getUpload(uploadId);
     if (!upload || upload.owner_id !== ownerId) throw new ApiError(404, "UPLOAD_NOT_FOUND", "上传记录不存在");
     if (clientMatchId !== undefined && upload.client_match_id !== clientMatchId) {
@@ -69,6 +69,7 @@ export class TaskService {
       mode, status: "queued", stage: "queued", progress: 0,
       input_object_key: upload.input_object_key, output_object_key: upload.output_object_key,
       input: { filename: upload.original_filename, content_type: upload.content_type, size_bytes: metadata.sizeBytes, duration_seconds: upload.duration_seconds },
+      analysis_context: jerseyHint || trainingItem ? { jersey_hint: jerseyHint, training_item: trainingItem } : undefined,
       raw_lifecycle: { delete_after: addDays(now, this.config.rawRetentionDays) },
       result_lifecycle: {}, attempt: 0, max_attempts: 3, available_at: now, created_at: now, updated_at: now
     };
@@ -154,9 +155,14 @@ export class TaskService {
       if (!task) throw new ApiError(404, "TASK_NOT_FOUND", "任务不存在");
       if (String(output.object_key) !== task.output_object_key) throw new ApiError(400, "INVALID_OUTPUT_KEY", "output object key does not match task assignment");
       const now = this.now();
+      const resultPayload = body?.result || {};
+      const detectionPayload = resultPayload?.detection || {};
       return this.repo.complete(task._id, String(body.lease_token), String(body.idempotency_key), {
         output: { object_key: task.output_object_key, etag: String(output.etag || ""), size_bytes: number(output.size_bytes, "output.size_bytes") },
-        diagnostics: body.diagnostics, warnings: Array.isArray(body.warnings) ? body.warnings.slice(0, 20).map(String) : [], model: body.model,
+        diagnostics: body.diagnostics ?? detectionPayload?.diagnostics,
+        events: detectionPayload?.events ?? resultPayload?.events ?? undefined,
+        training: detectionPayload?.training ?? resultPayload?.training ?? undefined,
+        warnings: Array.isArray(body.warnings) ? body.warnings.slice(0, 20).map(String) : [], model: body.model,
         result_lifecycle: { delete_after: addDays(now, this.config.resultRetentionDays) }
       }, now);
     });

@@ -123,7 +123,9 @@ export const main = async (event: any, context: any) => {
       if (!body.upload_id || !body.client_match_id) throw new ApiError(400, "INVALID_INPUT", "upload_id 和 client_match_id 为必填项");
       const mode = body.mode === "single" ? "single" : "deep";
       return respond(202, publicTask(await api.confirmUpload(
-        currentUser(event, context), String(body.upload_id), String(body.client_match_id), mode
+        currentUser(event, context), String(body.upload_id), String(body.client_match_id), mode,
+        body.jersey_hint ? String(body.jersey_hint).slice(0, 128) : undefined,
+        body.training_item ? String(body.training_item).slice(0, 128) : undefined
       )));
     }
     let match = route.match(/^\/api\/v1\/uploads\/([^/]+)\/confirm$/);
