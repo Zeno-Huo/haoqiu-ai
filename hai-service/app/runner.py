@@ -133,11 +133,10 @@ class YoloVideoRunner:
         counts: Counter[str] = Counter()
         classes_seen: set[str] = set()
         processed = 0
-        # 限制输出分辨率：带框视频只用于网页预览和人工确认，
-        # 直接按原始 1080p/4K 编码会让 30 秒视频产出 40MB 以上，
-        # 单个大文件 PUT 上传在弱网下极易失败。这里把高边压到 720p
-        # （等比例缩放，边长补偶），配合 CRF 提到 30，30 秒可压到 10MB 内。
-        max_encode_height = int(os.environ.get("HAOQIU_MAX_ENCODE_HEIGHT", "720"))
+        # 输出分辨率与画质：带框视频要在网页上看清球员框、号码、置信度小字，
+        # 不能压太狠。上传卡死的根因已修（cloud_adapters 两重保险），体积大些也能传。
+        # 这里把高边压到 1080p（等比例缩放、边长补偶），CRF 23 + medium preset 保清晰。
+        max_encode_height = int(os.environ.get("HAOQIU_MAX_ENCODE_HEIGHT", "1080"))
         scale = min(1.0, max_encode_height / float(height))
         encoded_width = max(2, int(width * scale))
         encoded_height = max(2, int(height * scale))
@@ -152,8 +151,8 @@ class YoloVideoRunner:
             stream.height = encoded_height
             stream.pix_fmt = "yuv420p"
             stream.options = {
-                "preset": os.environ.get("HAOQIU_ENCODE_PRESET", "veryfast"),
-                "crf": os.environ.get("HAOQIU_ENCODE_CRF", "30"),
+                "preset": os.environ.get("HAOQIU_ENCODE_PRESET", "medium"),
+                "crf": os.environ.get("HAOQIU_ENCODE_CRF", "23"),
             }
         except Exception as exc:
             capture.release()
