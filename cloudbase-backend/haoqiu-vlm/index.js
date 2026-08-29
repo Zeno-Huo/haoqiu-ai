@@ -35,6 +35,13 @@ const vlmProvider = process.env.VLM_PROVIDER || "qwen";
 const vlmApiKey = process.env.VLM_API_KEY || process.env.DASHSCOPE_API_KEY;
 const vlmModel = process.env.VLM_MODEL || "qwen-vl-max";
 
+// 视频采样参数：让千问自己负责采样，不再本地抽帧（避免维护 FFmpeg 抽帧逻辑）。
+// 体育高速运动场景用高于默认(2)的 fps；max_frames 取 qwen-vl-max 抽帧上限 512；
+// total_pixels 取 qwen-vl-max 总像素上限 67108864（约 65536 图像 token）。均可 env 覆盖。
+const vlmVideoFps = Number(process.env.VLM_VIDEO_FPS) || 4;
+const vlmVideoMaxFrames = Number(process.env.VLM_VIDEO_MAX_FRAMES) || 512;
+const vlmVideoTotalPixels = Number(process.env.VLM_VIDEO_TOTAL_PIXELS) || 67108864;
+
 const TASK_PREFIX = "db/task/";
 const taskKey = (id) => `${TASK_PREFIX}${id}.json`;
 
@@ -125,10 +132,20 @@ async function postToQwen(body) {
 }
 
 async function callQwenWithVideo(videoUrl, promptText) {
+  // 把完整视频 URL 交给模型，由模型按以下参数自行采样（不本地抽帧）：
+  // - fps：体育高速运动需高于默认 2，才能抓清快速动作（冲刺/快传/变向）
+  // - max_frames：qwen-vl-max 抽帧上限 512，长视频也能保留足够帧数
+  // - total_pixels：所有抽取帧的总像素预算（单帧像素 × 帧数），封顶以控制 token 消耗
+  const videoContent = {
+    video: videoUrl,
+    fps: vlmVideoFps,
+    max_frames: vlmVideoMaxFrames,
+    total_pixels: vlmVideoTotalPixels,
+  };
   const body = {
     model: vlmModel,
     input: {
-      messages: [{ role: "user", content: [{ video: videoUrl }, { text: promptText }] }],
+      messages: [{ role: "user", content: [videoContent, { text: promptText }] }],
     },
     parameters: { result_format: "message" },
   };
@@ -796,6 +813,7 @@ exports.main = async (event) => {
       const videoUrl = prepared.url;
       const durationSec = prepared.seconds;
       console.log(`[vlm] 输入准备: ${prepared.reason}`);
+      console.log(`[vlm] 视频采样参数: fps=${vlmVideoFps}, max_frames=${vlmVideoMaxFrames}, total_pixels=${vlmVideoTotalPixels}`);
 
       const rounds = {};
       const roundDefs = [
@@ -828,6 +846,7 @@ exports.main = async (event) => {
       const dashboard = mergeRoundsToDashboard(rounds, durationSec);
       if (prepared?.reason) dashboard.notes = [...(dashboard.notes || []), `视频预处理：${prepared.reason}`];
       if (prepared?.compressed) dashboard.notes = [...(dashboard.notes || []), `（已压缩至 ${((prepared.bytes || 0) / 1048576).toFixed(0)}MB / ${Math.round(durationSec)}秒后分析）`];
+      dashboard.notes = [...(dashboard.notes || []), `视频采样: fps=${vlmVideoFps}/max_frames=${vlmVideoMaxFrames}/total_pixels=${vlmVideoTotalPixels}`];
       const rawContent = JSON.stringify(dashboard);
 
       // 用 parseVlmText 统一规范化（幂等）
