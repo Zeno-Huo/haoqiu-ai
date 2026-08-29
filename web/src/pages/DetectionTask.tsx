@@ -23,7 +23,7 @@ function safeJobSnapshot(job: CloudDetectionJob): CloudDetectionJob {
   }
 }
 
-/** 深度复盘：整段视频直传 COS 后创建 GPU 检测任务。 */
+/** 深度往期分析：整段视频直传 COS 后创建 GPU 检测任务。 */
 async function ensureCloudWorkflow(
   matchId: string,
   file: File | undefined,
@@ -41,8 +41,8 @@ const STAGE_LABELS: Record<DetectionJobStage, string> = {
   probing: '读取完整视频信息',
   detecting: '正在检测画面中的球员候选',
   rendering: '正在生成检测视频',
-  completed: '深度复盘已完成',
-  failed: '深度复盘失败',
+  completed: '深度往期分析已完成',
+  failed: '深度往期分析失败',
 }
 
 const WORKFLOW_LABELS: Record<WorkflowPhase, string> = UPLOAD_PHASE_LABELS
@@ -173,16 +173,16 @@ export default function DetectionTask() {
     <div className="page-shell px-4 py-10">
       <div className="mx-auto max-w-3xl">
         <header className="mb-7">
-          <p className="eyebrow">深度复盘 · 次入口</p>
-          <h1 className="mt-2 text-3xl font-semibold text-[var(--text-primary)]">{success ? '深度复盘已完成' : terminalFailure ? '深度复盘失败' : '正在检测画面中的球员候选'}</h1>
-            <p className="mt-2 text-sm leading-6 text-[var(--text-muted)]">用于需要更完整画面处理的赛后复盘；当前服务不可用时可直接查看球队复盘 Demo。</p>
+          <p className="eyebrow">深度往期分析 · 次入口</p>
+          <h1 className="mt-2 text-3xl font-semibold text-[var(--text-primary)]">{success ? '深度往期分析已完成' : terminalFailure ? '深度往期分析失败' : '正在检测画面中的球员候选'}</h1>
+            <p className="mt-2 text-sm leading-6 text-[var(--text-muted)]">用于需要更完整画面处理的赛后往期分析；当前服务不可用时可直接查看球队往期分析 Demo。</p>
         </header>
 
         {!configured ? (
           <section className="panel p-6">
-            <h2 className="text-lg font-semibold text-[var(--text-primary)]">深度复盘暂不可用</h2>
-            <p className="mt-2 text-sm leading-6 text-[var(--text-muted)]">分析没有完成，请再试一次；也可以查看球队复盘 Demo。</p>
-            <div className="mt-6 flex flex-wrap gap-3"><Link className="btn-secondary" to={'/match/' + initialMatch.id + '/quality'}>返回画面检查</Link><button className="btn-primary" onClick={() => navigate('/match/' + initialMatch.id + '/analyzing')}>查看球队复盘 Demo</button></div>
+            <h2 className="text-lg font-semibold text-[var(--text-primary)]">深度往期分析暂不可用</h2>
+            <p className="mt-2 text-sm leading-6 text-[var(--text-muted)]">分析没有完成，请再试一次；也可以查看球队往期分析 Demo。</p>
+            <div className="mt-6 flex flex-wrap gap-3"><Link className="btn-secondary" to={'/match/' + initialMatch.id + '/quality'}>返回画面检查</Link><button className="btn-primary" onClick={() => navigate('/match/' + initialMatch.id + '/analyzing')}>查看球队往期分析 Demo</button></div>
           </section>
         ) : (
           <section className="panel p-5 sm:p-6">
@@ -253,8 +253,8 @@ export default function DetectionTask() {
             )}
 
             <div className="mt-7 border-t border-[var(--line)] pt-5">
-              <p className="text-xs leading-5 text-[var(--text-muted)]">球队复盘 Demo 与云检测结果相互独立；Demo 中的比分、控球、射门和球员数据不是本次模型输出。</p>
-              <button className="btn-secondary mt-3" onClick={() => navigate('/match/' + initialMatch.id + '/analyzing')}>查看球队复盘 Demo</button>
+              <p className="text-xs leading-5 text-[var(--text-muted)]">球队往期分析 Demo 与云检测结果相互独立；Demo 中的比分、控球、射门和球员数据不是本次模型输出。</p>
+              <button className="btn-secondary mt-3" onClick={() => navigate('/match/' + initialMatch.id + '/analyzing')}>查看球队往期分析 Demo</button>
             </div>
           </section>
         )}

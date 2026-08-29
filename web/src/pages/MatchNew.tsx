@@ -6,6 +6,9 @@ import type { Match, Player } from '../types'
 
 type AnalysisMode = 'instant' | 'single' | 'training'
 
+// 个人训练预设项目库：想增删直接在数组里加一行，用户仍可「自定义」任意项目，不框死。
+const TRAINING_PRESETS = ['射门', '传球', '停球', '带球', '颠球', '头球', '变向过人', '射门力量']
+
 const MODE_COPY: Record<AnalysisMode, { title: string; subtitle: string; start: string }> = {
   instant: { title: '即时分析', subtitle: '上传比赛视频，快速看懂球队表现', start: '立即分析' },
   single: { title: '个人比赛', subtitle: '找到你，看看这场踢得怎么样', start: '分析个人表现' },
@@ -32,9 +35,9 @@ export default function MatchNew() {
   const [source, setSource] = useState<'new' | 'previous'>('new')
   const [previousMatch, setPreviousMatch] = useState<Match>()
   const [jerseyHint, setJerseyHint] = useState('')
-  const [targetNumber, setTargetNumber] = useState('')
-  const [targetNickname, setTargetNickname] = useState('')
+  const [singleJerseyHint, setSingleJerseyHint] = useState('')
   const [trainingAction, setTrainingAction] = useState('')
+  const [trainingCustom, setTrainingCustom] = useState('')
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
 
@@ -57,7 +60,6 @@ export default function MatchNew() {
   const modeCopy = MODE_COPY[mode]
   const canStart = videoState === 'ready' && Boolean(videoName) &&
     (mode !== 'instant' || Boolean(jerseyHint.trim())) &&
-    (mode !== 'single' || Boolean(targetNumber.trim() || targetNickname.trim())) &&
     (mode !== 'training' || Boolean(trainingAction))
 
   function selectPrevious(item: Match) {
@@ -111,11 +113,15 @@ export default function MatchNew() {
   function start() {
     if (!canStart) return
     const id = newId('m')
+    const hint = singleJerseyHint.trim()
+    const numberMatch = hint.match(/\d+/)?.[0]
+    const colorMatch = hint.match(/(红|蓝|白|黑|绿|黄|橙|紫|粉|灰|青)/)?.[0]
     const players: Player[] = Array.from({ length: 7 }, (_, index) => ({
       id: newId('p'),
-      name: index === 0 && targetNickname.trim() ? targetNickname.trim() : `${index + 1}号球员`,
-      number: index === 0 && targetNumber.trim() ? targetNumber.trim() : `${index + 1}`,
+      name: index === 0 && hint ? '主角' : `${index + 1}号球员`,
+      number: index === 0 && numberMatch ? numberMatch : `${index + 1}`,
       position: index < 2 ? '前锋' : index < 5 ? '中场' : '后卫',
+      jerseyColor: index === 0 ? colorMatch : undefined,
     }))
     const match: Match = {
       id,
@@ -124,8 +130,13 @@ export default function MatchNew() {
       teamId: team.id, teamName: team.name, opponentName: '对手', myScore: 0, oppScore: 0,
       videoName, videoSource: selectedFile ? 'local-file' : 'demo', videoMeta,
       cloudUploadId: previousMatch?.cloudUploadId, instantJobId: previousMatch?.instantJobId, cloudJobId: previousMatch?.cloudJobId,
-      ourTeamContext: mode === 'instant' ? { jerseyHint: jerseyHint.trim() } : undefined,
-      identificationStatus: 'pending', players, createdAt: Date.now(), analysisMode: mode === 'single' ? 'single' : undefined,
+      ourTeamContext: mode === 'instant'
+        ? { jerseyHint: jerseyHint.trim() }
+        : mode === 'training'
+          ? (trainingAction.trim() ? { trainingItem: trainingAction.trim() } : undefined)
+          : (hint ? { jerseyHint: hint } : undefined),
+      identificationStatus: 'pending', players, createdAt: Date.now(),
+      analysisMode: mode === 'single' ? 'single' : mode === 'training' ? 'training' : undefined,
     }
     saveMatch(match)
     if (selectedFile) cacheVideoFile(id, selectedFile)
@@ -144,8 +155,17 @@ export default function MatchNew() {
 
       {videoState === 'ready' && <div className="analysis-min-fields">
         {mode === 'instant' && <><label className="field-label">哪边是我们？</label><input className="input-base" value={jerseyHint} maxLength={60} onChange={(event) => setJerseyHint(event.target.value)} placeholder="例如：白衣，画面左侧" /><p>告诉 AI 我方球衣或开场位置</p></>}
-        {mode === 'single' && <div className="grid gap-4 sm:grid-cols-2"><div><label className="field-label">球衣号码</label><input className="input-base" value={targetNumber} onChange={(event) => setTargetNumber(event.target.value)} placeholder="例如：10" /></div><div><label className="field-label">昵称</label><input className="input-base" value={targetNickname} onChange={(event) => setTargetNickname(event.target.value)} placeholder="任选一项" /></div></div>}
-        {mode === 'training' && <><label className="field-label">训练动作</label><div className="action-options">{['停球','传球','带球','射门'].map((action) => <button type="button" key={action} className={trainingAction === action ? 'is-active' : ''} onClick={() => setTrainingAction(action)}>{action}</button>)}</div></>}
+        {mode === 'single' && <div><label className="field-label">球衣提示（选填）</label><input className="input-base" value={singleJerseyHint} onChange={(event) => setSingleJerseyHint(event.target.value)} placeholder="例如：10号红色" /><p>告诉 AI 你的球衣号码 / 颜色，方便锁定你；不填则自动识别画面中最常出现的人</p></div>}
+        {mode === 'training' && <div>
+          <label className="field-label">训练项目</label>
+          <div className="action-options">
+            {TRAINING_PRESETS.map((action) => (
+              <button type="button" key={action} className={trainingAction === action ? 'is-active' : ''} onClick={() => { setTrainingAction(action); setTrainingCustom('') }}>{action}</button>
+            ))}
+          </div>
+          <input className="input-base mt-3" value={trainingCustom} onChange={(event) => { setTrainingCustom(event.target.value); setTrainingAction(event.target.value) }} placeholder="其他训练项目（自定义，如：左脚射门、两人撞墙式）" />
+          <p>选一个训练项目，或自由填写；项目决定报告里重点看哪些指标。</p>
+        </div>}
       </div>}
       {error && <p className="flow-error">{error}</p>}
       {!error && notice && <p className="flow-notice">{notice}</p>}

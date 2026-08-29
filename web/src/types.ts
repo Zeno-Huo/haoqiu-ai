@@ -15,6 +15,8 @@ export interface Player {
   name: string
   number: string
   position: Position
+  /** 球衣颜色（可选）：与号码一起作为追踪目标线索，辅助视觉大模型区分同名号球员。 */
+  jerseyColor?: string
 }
 
 /** 球队成员档案：号码与位置均为偏好信息，不作为永久身份凭证。 */
@@ -67,6 +69,8 @@ export interface Match {
     teamName?: string
     jerseyHint?: string
     openingFramePoint?: { x: number; y: number }
+    /** 个人训练所选的训练项目（自由文本，可自定义，不框死）。 */
+    trainingItem?: string
   }
   identificationStatus?: IdentificationStatus
   /** 画面候选球员 ID -> 球队成员 ID。只有出现在此表中的身份才视为已由队长确认。 */
@@ -83,8 +87,8 @@ export interface Match {
   /** 即时分析（视觉大模型文字复盘）任务；与深度复盘任务相互独立、可并存。 */
   instantJobId?: string
   instantAnalysisJob?: CloudDetectionJob
-  /** single：用同一条 YOLO 检测链路生成单人候选与带框视频。 */
-  analysisMode?: 'single'
+  /** single：个人比赛用同一条 YOLO 检测链路生成单人候选与带框视频；training：个人训练。 */
+  analysisMode?: 'single' | 'training'
   trackingJobId?: string
   trackingDetectionJob?: CloudDetectionJob
   trackingCandidateId?: string

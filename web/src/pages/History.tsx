@@ -34,14 +34,14 @@ export default function History() {
   }
 
   function remove(match: Match) {
-    if (!window.confirm(`删除「${match.videoName || match.name}」的复盘记录？此操作不可撤销。`)) return
+    if (!window.confirm(`删除「${match.videoName || match.name}」的往期分析记录？此操作不可撤销。`)) return
     deleteMatch(match.id)
     setMatches((list) => list.filter((item) => item.id !== match.id))
   }
 
   function removeSelected() {
     if (selected.size === 0) return
-    if (!window.confirm(`确认删除选中的 ${selected.size} 场复盘记录？此操作不可撤销。`)) return
+    if (!window.confirm(`确认删除选中的 ${selected.size} 场往期分析记录？此操作不可撤销。`)) return
     selected.forEach((id) => deleteMatch(id))
     setMatches((list) => list.filter((item) => !selected.has(item.id)))
     exitBatch()
@@ -52,8 +52,8 @@ export default function History() {
       <div className="mode-page-inner">
         <header className="history-head">
           <Link to="/" className="history-back">← 首页</Link>
-          <h1>历史复盘</h1>
-          <p>{matches.length ? `共 ${matches.length} 场 · ${doneCount} 场已完成` : '还没有任何复盘记录'}</p>
+          <h1>往期分析</h1>
+          <p>{matches.length ? `共 ${matches.length} 场 · ${doneCount} 场已完成` : '还没有任何往期分析记录'}</p>
           {matches.length > 0 && (
             <div className="history-tools">
               {!batchMode ? (
@@ -74,7 +74,7 @@ export default function History() {
 
         {matches.length === 0 ? (
           <section className="history-empty">
-            <h2>还没有历史复盘</h2>
+            <h2>还没有往期分析</h2>
             <p>上传一段比赛视频，分析完成后会自动记录在这里。</p>
             <Link className="btn-primary" to="/match/new?mode=instant">上传视频开始分析</Link>
           </section>
@@ -91,7 +91,7 @@ export default function History() {
                     </label>
                   )}
                   <div className="history-card-main">
-                    <h2>{match.videoName || match.name}</h2>
+                    <h2>历史视频</h2>
                     <p className="history-meta">
                       {formatDate(match.date)} · {formatDuration(match.duration)}
                       {match.teamName ? ` · ${match.teamName}` : ''}
@@ -102,7 +102,7 @@ export default function History() {
                     <span className={`history-status is-${status}`}>{MATCH_STATUS_LABEL[status]}</span>
                   </div>
                   <div className="history-actions">
-                    <Link className="btn-primary" to={matchTarget(match)}>查看复盘</Link>
+                    <Link className="btn-primary" to={matchTarget(match)}>查看往期分析</Link>
                     {!batchMode && <button className="btn-secondary" type="button" onClick={() => remove(match)}>删除</button>}
                   </div>
                 </article>

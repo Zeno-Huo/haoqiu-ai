@@ -36,7 +36,7 @@ export function matchStatus(match: Match): MatchStatus {
 
 export const MATCH_KIND_LABEL: Record<MatchKind, string> = {
   instant: '即时分析',
-  report: '演示复盘',
+  report: '演示往期分析',
   pending: '待分析',
 }
 

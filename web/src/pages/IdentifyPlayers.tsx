@@ -52,7 +52,7 @@ export default function IdentifyPlayers() {
     <div className="page-shell px-4 py-10">
       <div className="mx-auto max-w-2xl">
         <header className="mb-7">
-          <p className="status-text mb-3"><span className="status-dot" />球队复盘已生成</p>
+          <p className="status-text mb-3"><span className="status-dot" />球队往期分析已生成</p>
           <h1 className="text-3xl font-semibold text-[var(--text-primary)]">补充球员标注</h1>
           <p className="mt-2 max-w-xl text-sm leading-6 text-[var(--text-muted)]">
             号码由 AI 从画面中整理，仅作为确认线索，不代表已经识别出球员身份。
@@ -91,20 +91,20 @@ export default function IdentifyPlayers() {
                 </div>
               )) : (
                 <p className="py-6 text-sm leading-6 text-[var(--text-muted)]">
-                  还没有球队成员。可以<Link className="mx-1 text-[var(--ai)]" to="/team">先添加成员</Link>，或暂不标注直接查看复盘。
+                  还没有球队成员。可以<Link className="mx-1 text-[var(--ai)]" to="/team">先添加成员</Link>，或暂不标注直接查看往期分析。
                 </p>
               )}
 
               {team.members.length > 0 && (
                 <button className="btn-primary mt-4 w-full justify-center" type="button" onClick={confirm} disabled={!confirmedCount}>
-                  {confirmedCount ? `保存 ${confirmedCount} 名标注并查看复盘` : '至少标注一名球员'} <span aria-hidden>→</span>
+                  {confirmedCount ? `保存 ${confirmedCount} 名标注并查看往期分析` : '至少标注一名球员'} <span aria-hidden>→</span>
                 </button>
               )}
             </div>
           )}
 
           <button className="mt-4 w-full py-2 text-sm text-[var(--text-secondary)] hover:text-[var(--text-primary)]" type="button" onClick={skip}>
-            暂不标注，查看复盘
+            暂不标注，查看往期分析
           </button>
         </section>
 

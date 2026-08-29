@@ -262,11 +262,8 @@ class HttpsSignedUrlObjectStorage:
         if not source.is_file() or source.stat().st_size == 0:
             raise RuntimeError("待上传结果文件不存在或为空")
         with source.open("rb") as body:
-            response = self.client.put(
-                url,
-                content=body,
-                headers={"Content-Type": content_type},
-            )
+            data = body.read()
+        response = self._put_robust(url, data, content_type)
         self._require_success(response, "COS上传")
         etag = str(response.headers.get("ETag", "")).strip('"')
         if not etag:
@@ -276,6 +273,69 @@ class HttpsSignedUrlObjectStorage:
             etag=etag,
             size_bytes=source.stat().st_size,
         )
+
+    def _put_robust(self, url: str, data: bytes, content_type: str):
+        """上传带两重保险：全新 httpx client -> curl 子进程兜底。
+
+        下载大文件后连接池里的连接可能已半关闭，复用同一个 client 会让
+        PUT 既不返回也不超时（表现为永久卡在 artifact_ready）。所以上传
+        一律用全新 client；仍然失败则用 curl 兜底。
+        """
+        print(f"[upload] 开始上传 {len(data) / 1024 / 1024:.1f} MB", flush=True)
+        try:
+            with httpx.Client(
+                timeout=httpx.Timeout(180, connect=15), follow_redirects=False
+            ) as client:
+                resp = client.put(
+                    url, content=data, headers={"Content-Type": content_type}
+                )
+            print(f"[upload] httpx 完成，HTTP {resp.status_code}", flush=True)
+            if resp.is_success:
+                return resp
+        except Exception as exc:
+            print(f"[upload] httpx 失败: {type(exc).__name__}: {exc}", flush=True)
+
+        import os
+        import subprocess
+        import tempfile
+
+        print("[upload] 改用 curl 兜底上传", flush=True)
+        fd, tmp = tempfile.mkstemp(suffix=".bin")
+        try:
+            with os.fdopen(fd, "wb") as fh:
+                fh.write(data)
+            hdr = tmp + ".hdr"
+            proc = subprocess.run(
+                [
+                    "curl", "-sS", "-X", "PUT", url,
+                    "-H", f"Content-Type: {content_type}",
+                    "--data-binary", f"@{tmp}",
+                    "-D", hdr, "-o", "/dev/null",
+                    "--connect-timeout", "15", "--max-time", "900",
+                ],
+                capture_output=True, text=True, timeout=960,
+            )
+            code = 0
+            etag = ""
+            if os.path.isfile(hdr):
+                for line in open(hdr, errors="replace"):
+                    low = line.lower()
+                    if low.startswith("http/"):
+                        parts = line.split()
+                        if len(parts) >= 2 and parts[1].isdigit():
+                            code = int(parts[1])
+                    if low.startswith("etag:"):
+                        etag = line.split(":", 1)[1].strip().strip('"')
+                os.unlink(hdr)
+            print(f"[upload] curl 完成，HTTP {code} stderr={proc.stderr[:200]}", flush=True)
+            return httpx.Response(
+                status_code=code or 502,
+                request=httpx.Request("PUT", url),
+                headers={"ETag": etag} if etag else {},
+            )
+        finally:
+            if os.path.exists(tmp):
+                os.unlink(tmp)
 
     def _validate_url(self, signed_url: str | None, object_key: str, label: str) -> str:
         if not signed_url:

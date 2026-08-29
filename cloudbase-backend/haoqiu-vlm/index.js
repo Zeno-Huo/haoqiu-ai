@@ -417,6 +417,45 @@ ${ctxPart}
 - 不要在文字里提及具体比分`;
 }
 
+// 第 6 轮：动作矫正（L4）。只评画面里真看清的技术动作，宁缺毋滥。
+function buildTechniquePrompt(durationSec, ctx) {
+  const ctxPart = buildContextString(ctx);
+  return `你是足球技术教练。请观看这段完整比赛视频（总时长约 ${Math.round(durationSec)} 秒）。
+
+${ctxPart}
+
+【任务】针对画面中你【真正看清】的技术动作，给出动作观察与矫正建议。
+
+可以点评的维度（只评你真看到的，没看到的绝对不要写）：
+- 射门：支撑脚位置、触球部位（脚背/脚弓）、摆腿幅度、身体重心
+- 传球：出球脚法、触球部位、身体朝向、力度
+- 停球/接球：第一脚触球缓冲、是否停大
+- 带球/过人：触球节奏、护球动作、变向
+- 跑动：步频、重心、无球跑位
+- 防守：上抢时机、身体姿态、卡位
+
+【输出】只输出JSON（不要其他文字）：
+{
+  "techniques": [
+    {
+      "player_number": "10",
+      "aspect": "射门",
+      "observed": "你在画面里实际看到的动作（具体描述，如'禁区外右脚抽射，支撑脚离球约半米，身体后仰'）",
+      "issue": "这个动作的问题（没有明显问题就填 null）",
+      "advice": "具体可执行的矫正建议"
+    }
+  ],
+  "coaching_summary": "整体动作建议（1-2句，具体，不要空话）"
+}
+
+【严格规则 · 最重要】
+- 只写你在画面里【真实看到】的动作。看不清、不确定 → 该条不要输出，宁缺毋滥。
+- 不要编造球员号码：看清号码就填数字字符串（如 "10"）；看不清号码就填 null，不要猜。
+- 不要为了凑数而编：最多 5 条，没看清就返回空数组 []。
+- issue 没有明显问题时填 null，不要硬挑毛病。
+- advice 要具体到"怎么做"（如"支撑脚再靠近球 10-15 厘米，射门时重心前压"），禁止"加强练习""继续努力"这类空话。`;
+}
+
 // ============================================================
 // JSON 解析工具
 // ============================================================
@@ -451,6 +490,7 @@ function mergeRoundsToDashboard(rounds, durationSec) {
   const shotRound = rounds.shots?.parsed;
   const defRound = rounds.defense?.parsed;
   const summaryRound = rounds.summary?.parsed;
+  const techniqueRound = rounds.technique?.parsed;
 
   // --- 收集所有事件（传球/射门/防守轮）---
   const allEvents = [];
@@ -579,6 +619,39 @@ function mergeRoundsToDashboard(rounds, durationSec) {
     if (best.insights.length) best.is_mvp = true;
   }
 
+  // --- 动作矫正（第 6 轮）：按号码挂到球员 ---
+  let techniqueSummary = cleanText(techniqueRound?.coaching_summary) || null;
+  if (techniqueRound && Array.isArray(techniqueRound.techniques)) {
+    const orphan = [];
+    for (const item of techniqueRound.techniques) {
+      const observed = cleanText(item?.observed);
+      const advice = cleanText(item?.advice);
+      if (!observed && !advice) continue; // 空条目丢弃，避免前端渲染空白
+      const entry = {
+        player_number: cleanText(item?.player_number),
+        aspect: cleanText(item?.aspect),
+        observed,
+        issue: cleanText(item?.issue),
+        advice,
+      };
+      const target = entry.player_number ? playerMap[entry.player_number] : undefined;
+      if (target) {
+        if (!Array.isArray(target.techniques)) target.techniques = [];
+        target.techniques.push(entry);
+      } else {
+        orphan.push(entry);
+      }
+    }
+    // 号码没匹配上（无号码球员 / 号码看不清）时挂到 MVP 或第一个焦点球员，避免内容丢失
+    if (orphan.length) {
+      const fallback = players.find((p) => p.is_mvp) || players[0];
+      if (fallback) {
+        if (!Array.isArray(fallback.techniques)) fallback.techniques = [];
+        for (const entry of orphan) fallback.techniques.push({ ...entry, player_number: fallback.number ?? null });
+      }
+    }
+  }
+
   // --- 团队统计（从事件推导）---
   const teamStats = { home: {}, away: {} };
   for (const evt of deduped) {
@@ -624,7 +697,7 @@ function mergeRoundsToDashboard(rounds, durationSec) {
     schema_version: "1.0",
     source: "qwen-vlm",
     data_status: "model_estimate",
-    notes: ["多轮整视频直传(qwen-vl-max) 5轮合并：球员/传球/射门/防守/总结"],
+    notes: ["多轮整视频直传(qwen-vl-max) 6轮合并：球员/传球/射门/防守/总结/动作矫正"],
     match: (() => {
       const rawHome = asNum(summaryRound?.score?.home);
       const rawAway = asNum(summaryRound?.score?.away);
@@ -647,6 +720,7 @@ function mergeRoundsToDashboard(rounds, durationSec) {
       next_focus: summaryRound?.next_focus || null,
     },
     players,
+    technique_summary: techniqueSummary,
     events: deduped,
     source_frames: [],
   };
@@ -730,13 +804,14 @@ exports.main = async (event) => {
         ["shots", "射门识别", buildShotPrompt(durationSec, ctx)],
         ["defense", "防守事件", buildDefensePrompt(durationSec, ctx)],
         ["summary", "综合总结", buildSummaryPrompt(durationSec, ctx)],
+        ["technique", "动作矫正", buildTechniquePrompt(durationSec, ctx)],
       ];
 
       for (let i = 0; i < roundDefs.length; i++) {
         const [key, label, prompt] = roundDefs[i];
         const progress = 5 + Math.floor((i / roundDefs.length) * 80); // 5% -> 85%
         try {
-          await updateTask(taskId, { stage: `round_${i + 1}_${key}`, progress, round_info: `${label} (${i + 1}/5)` });
+          await updateTask(taskId, { stage: `round_${i + 1}_${key}`, progress, round_info: `${label} (${i + 1}/${roundDefs.length})` });
           console.log(`[vlm] 第${i + 1}轮 ${label} 开始`);
           const raw = await callQwenWithVideo(videoUrl, prompt);
           const parsed = extractJsonFromText(raw);

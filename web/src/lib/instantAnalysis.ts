@@ -29,6 +29,19 @@ export interface InstantTeamStats {
   assists?: number
 }
 
+/** 动作矫正（L4）：模型针对某一个技术动作的观察与建议。 */
+export interface TechniqueNote {
+  /** 动作维度，如"射门""传球""停球"。 */
+  aspect?: string
+  /** 画面里实际观察到的动作。 */
+  observed?: string
+  /** 这个动作的问题；没有明显问题时为空。 */
+  issue?: string
+  /** 具体可执行的矫正建议。 */
+  advice?: string
+  playerNumber?: string
+}
+
 export interface InstantPlayer {
   id: string
   name?: string
@@ -47,6 +60,8 @@ export interface InstantPlayer {
   stats: InstantTeamStats
   insights: string[]
   events: InstantEvent[]
+  /** 动作矫正（L4）：模型对该球员技术动作的点评与建议。 */
+  techniques?: TechniqueNote[]
 }
 
 export interface InstantEvent {
@@ -72,6 +87,8 @@ export interface InstantAnalysisDashboard {
   teamStats: InstantTeamStats
   players: InstantPlayer[]
   events: InstantEvent[]
+  /** 全队动作矫正总建议（L4）。 */
+  techniqueSummary?: string
 }
 
 function object(value: unknown): Record<string, unknown> | undefined {
@@ -141,6 +158,22 @@ function event(value: unknown): InstantEvent {
   }
 }
 
+/** 单条动作矫正；observed 与 advice 都为空时丢弃，避免前端渲染空白卡片。 */
+function technique(value: unknown): TechniqueNote | undefined {
+  const item = object(value)
+  if (!item) return undefined
+  const observed = text(first(item, ['observed', 'observation', '观察', '动作']))
+  const advice = text(first(item, ['advice', 'suggestion', '建议', '矫正建议']))
+  if (!observed && !advice) return undefined
+  return {
+    playerNumber: text(first(item, ['player_number', 'playerNumber', '号码'])),
+    aspect: text(first(item, ['aspect', 'dimension', '维度', '动作类型'])),
+    observed,
+    issue: text(first(item, ['issue', 'problem', '问题'])),
+    advice,
+  }
+}
+
 function player(value: unknown, index: number): InstantPlayer {
   const item = object(value) || {}
   const insightValue = first(item, ['insights', 'insight', 'notes', 'note', '观察', '特点', '点评'])
@@ -170,6 +203,12 @@ function player(value: unknown, index: number): InstantPlayer {
     stats: stats(first(item, ['stats', 'statistics', '数据']) || item),
     insights,
     events: Array.isArray(eventValue) ? eventValue.map(event) : [],
+    techniques: (() => {
+      const techValue = first(item, ['techniques', 'technique', 'coaching', '动作矫正', '技术动作'])
+      if (!Array.isArray(techValue)) return undefined
+      const list = techValue.map(technique).filter((item): item is TechniqueNote => Boolean(item))
+      return list.length ? list : undefined
+    })(),
   }
 }
 
@@ -211,8 +250,9 @@ export function normalizeInstantDashboard(value: unknown): InstantAnalysisDashbo
     teamStats: stats(teamStatsValue),
     players: Array.isArray(playersValue) ? playersValue.map(player) : [],
     events: Array.isArray(eventsValue) ? eventsValue.map(event) : [],
+    techniqueSummary: text(first(source, ['technique_summary', 'techniqueSummary', 'coaching_summary', '动作矫正总结'])),
   }
-  const hasData = Boolean(result.score || result.shots || result.teamAverage || result.players.length || result.events.length || Object.keys(result.teamStats).length || Object.values(result.summary).some(Boolean))
+  const hasData = Boolean(result.score || result.shots || result.teamAverage || result.players.length || result.events.length || result.techniqueSummary || Object.keys(result.teamStats).length || Object.values(result.summary).some(Boolean) || result.players.some((player) => (player.techniques?.length ?? 0) > 0))
   return hasData ? result : undefined
 }
 

@@ -219,7 +219,7 @@ function ParticleSphere() {
 function Recent({ matches }: { matches: Match[] }) {
   return (
     <Link to="/history" className="home-recent">
-      <span>历史复盘</span>
+      <span>往期分析</span>
       <b>{matches.length > 0 ? `${matches.length} 场` : '查看'}</b>
       <i aria-hidden="true">→</i>
     </Link>

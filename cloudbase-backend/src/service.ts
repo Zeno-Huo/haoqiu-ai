@@ -82,14 +82,18 @@ export class TaskService {
   }
 
   /** 即时分析(VLM)：基于已上传的视频创建任务，由 haoqiu-vlm 异步处理。 */
+  // 重要：instant 任务必须用独立 _id（instant_<uploadId>），绝不能与同视频的 GPU 检测任务（_id=uploadId）撞号。
+  // 旧实现用 uploadId 作 _id，导致 createInstantJob 在 GPU 任务已创建后立即命中它并直接返回，
+  // VLM 个人表现分析从未真正创建——个人比赛页面因此永远出不了个人报告（且 GPU 卡住时整体卡死）。
   async createInstantJob(ownerId: string, uploadId: string, clientMatchId?: string, analysisContext?: TaskRecord["analysis_context"]): Promise<TaskRecord> {
     const upload = await this.repo.getUpload(uploadId);
     if (!upload || upload.owner_id !== ownerId) throw new ApiError(404, "UPLOAD_NOT_FOUND", "上传记录不存在");
-    const existing = await this.repo.getTask(uploadId);
+    const instantId = `instant_${uploadId}`;
+    const existing = await this.repo.getTask(instantId);
     if (existing) return existing;
     const now = this.now();
     const task: TaskRecord = {
-      _id: upload._id, owner_id: ownerId, client_match_id: upload.client_match_id || clientMatchId,
+      _id: instantId, owner_id: ownerId, client_match_id: upload.client_match_id || clientMatchId,
       mode: "instant", analysis_context: analysisContext, status: "queued", stage: "queued", progress: 0,
       input_object_key: upload.input_object_key, output_object_key: upload.output_object_key,
       input: { filename: upload.original_filename, content_type: upload.content_type, size_bytes: upload.expected_size_bytes, duration_seconds: upload.duration_seconds },

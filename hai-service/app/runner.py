@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from collections import Counter
 from fractions import Fraction
 from pathlib import Path
@@ -132,8 +133,16 @@ class YoloVideoRunner:
         counts: Counter[str] = Counter()
         classes_seen: set[str] = set()
         processed = 0
-        encoded_width = width + width % 2
-        encoded_height = height + height % 2
+        # 限制输出分辨率：带框视频只用于网页预览和人工确认，
+        # 直接按原始 1080p/4K 编码会让 30 秒视频产出 40MB 以上，
+        # 单个大文件 PUT 上传在弱网下极易失败。这里把高边压到 720p
+        # （等比例缩放，边长补偶），配合 CRF 提到 30，30 秒可压到 10MB 内。
+        max_encode_height = int(os.environ.get("HAOQIU_MAX_ENCODE_HEIGHT", "720"))
+        scale = min(1.0, max_encode_height / float(height))
+        encoded_width = max(2, int(width * scale))
+        encoded_height = max(2, int(height * scale))
+        encoded_width += encoded_width % 2
+        encoded_height += encoded_height % 2
         output.parent.mkdir(parents=True, exist_ok=True)
 
         try:
@@ -142,7 +151,10 @@ class YoloVideoRunner:
             stream.width = encoded_width
             stream.height = encoded_height
             stream.pix_fmt = "yuv420p"
-            stream.options = {"preset": "veryfast", "crf": "24"}
+            stream.options = {
+                "preset": os.environ.get("HAOQIU_ENCODE_PRESET", "veryfast"),
+                "crf": os.environ.get("HAOQIU_ENCODE_CRF", "30"),
+            }
         except Exception as exc:
             capture.release()
             raise ProcessingError(
@@ -184,14 +196,10 @@ class YoloVideoRunner:
                             cv2.LINE_AA,
                         )
                 if encoded_width != width or encoded_height != height:
-                    annotated = cv2.copyMakeBorder(
+                    annotated = cv2.resize(
                         annotated,
-                        0,
-                        encoded_height - height,
-                        0,
-                        encoded_width - width,
-                        cv2.BORDER_CONSTANT,
-                        value=(0, 0, 0),
+                        (encoded_width, encoded_height),
+                        interpolation=cv2.INTER_AREA,
                     )
                 video_frame = av.VideoFrame.from_ndarray(annotated, format="bgr24")
                 for packet in stream.encode(video_frame):

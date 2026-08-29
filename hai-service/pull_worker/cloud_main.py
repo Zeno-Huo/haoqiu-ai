@@ -36,7 +36,15 @@ def main() -> None:
     config = CloudWorkerConfig.from_env()
     worker = build_worker(config)
     while True:
-        handled = worker.run_once()
+        try:
+            handled = worker.run_once()
+        except Exception as exc:  # noqa: BLE001 - 守护进程必须永不自杀
+            # 单个任务异常已在 run_once 内捕获；这里是兜底，防止任何
+            # 边界异常（心跳线程、初始化竞态等）导致整个 worker 退出，
+            # 否则 HAI 在烧钱却没人领任务。
+            print(f"[worker] run_once crashed, keepalive: {exc}", flush=True)
+            time.sleep(config.idle_interval_seconds)
+            continue
         if not handled:
             time.sleep(config.idle_interval_seconds)
 
