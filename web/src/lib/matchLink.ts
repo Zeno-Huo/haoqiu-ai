@@ -10,14 +10,18 @@ import type { Match } from '../types'
  * - 都没有           → 还没分析过 /match/:id/analyzing
  */
 export function matchTarget(match: Match): string {
+  if (match.analysisMode === 'single') return `/match/${match.id}/tracking`
+  if (match.analysisMode === 'training') return `/match/${match.id}/training`
   if (match.instantJobId) return `/match/${match.id}/instant`
   if (match.analysis) return `/match/${match.id}`
   return `/match/${match.id}/analyzing`
 }
 
-export type MatchKind = 'instant' | 'report' | 'pending'
+export type MatchKind = 'instant' | 'personal' | 'training' | 'report' | 'pending'
 
 export function matchKind(match: Match): MatchKind {
+  if (match.analysisMode === 'single') return 'personal'
+  if (match.analysisMode === 'training') return 'training'
   if (match.instantJobId) return 'instant'
   if (match.analysis) return 'report'
   return 'pending'
@@ -36,6 +40,8 @@ export function matchStatus(match: Match): MatchStatus {
 
 export const MATCH_KIND_LABEL: Record<MatchKind, string> = {
   instant: '即时分析',
+  personal: '个人比赛',
+  training: '个人训练',
   report: '演示往期分析',
   pending: '待分析',
 }

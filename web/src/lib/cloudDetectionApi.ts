@@ -1,4 +1,4 @@
-import type { CloudDetectionJob, CloudUploadTicket, CloudUploadTicketRequest, SignedDetectionVideo } from '../cloudDetectionTypes'
+import type { CloudDetectionJob, CloudUploadTicket, CloudUploadTicketRequest } from '../cloudDetectionTypes'
 import { getCloudBaseAccessToken } from './cloudBaseAuth'
 
 export class CloudDetectionApiError extends Error {
@@ -98,28 +98,11 @@ export function putWholeVideoToCos(
   })
 }
 
-export function createCloudDetectionJob(
-  uploadId: string,
-  clientMatchId: string,
-  mode: 'deep' | 'single' = 'deep',
-  jerseyHint?: string,
-  trainingItem?: string,
-): Promise<CloudDetectionJob> {
-  return invoke('POST', '/api/v1/cloud-detection-jobs', { upload_id: uploadId, client_match_id: clientMatchId, mode, jersey_hint: jerseyHint, training_item: trainingItem }, 202)
-}
-
-export function getCloudDetectionJob(jobId: string): Promise<CloudDetectionJob> {
-  return invoke('GET', `/api/v1/cloud-detection-jobs/${encodeURIComponent(jobId)}`)
-}
-
-export function getSignedDetectionVideo(jobId: string): Promise<SignedDetectionVideo> {
-  return invoke('POST', `/api/v1/cloud-detection-jobs/${encodeURIComponent(jobId)}/artifacts/annotated-video-url`)
-}
-
-/** 即时分析：复用同一段已上传视频，交给视觉大模型出文字复盘。 */
+/** 即时分析 / 个人比赛 / 个人训练：复用同一段已上传视频，交给视觉大模型出文字复盘。 */
 export interface InstantTeamContext {
   team_name?: string
   jersey_hint?: string
+  training_item?: string
   opening_frame_point?: { x: number; y: number }
 }
 

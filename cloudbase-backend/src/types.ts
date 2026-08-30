@@ -1,10 +1,10 @@
-export type TaskStatus = "queued" | "leased" | "running" | "retry_wait" | "succeeded" | "failed";
+/** 全面转向 VLM 后不再有 worker 租约中间态：排队 -> 成功 / 失败。 */
+export type TaskStatus = "queued" | "succeeded" | "failed";
 
 export interface UploadRecord {
   _id: string;
   owner_id: string;
   input_object_key: string;
-  output_object_key: string;
   original_filename: string;
   content_type: string;
   expected_size_bytes: number;
@@ -21,8 +21,8 @@ export interface TaskRecord {
   _id: string;
   owner_id: string;
   client_match_id?: string;
-  /** 分析模式：instant = 即时分析(VLM 视频理解，快)；deep = 深度复盘(GPU 检测，慢) */
-  mode?: "instant" | "deep" | "single";
+  /** 分析模式（全部由 VLM 完成）：instant = 团队比赛；single = 个人比赛。 */
+  mode?: "instant" | "single";
   analysis_context?: {
     team_name?: string;
     jersey_hint?: string;
@@ -33,29 +33,11 @@ export interface TaskRecord {
   stage: string;
   progress: number;
   input_object_key: string;
-  output_object_key: string;
   input: { filename: string; content_type: string; size_bytes: number; duration_seconds: number };
   raw_lifecycle: { delete_after: Date; deleted_at?: Date };
-  result_lifecycle: { delete_after?: Date; deleted_at?: Date };
-  attempt: number;
-  max_attempts: number;
-  available_at: Date;
-  lease_token?: string;
-  lease_owner?: string;
-  lease_expires_at?: Date;
-  idempotency_key?: string;
-  diagnostics?: unknown;
-  warnings?: string[];
-  model?: unknown;
   error?: { code: string; message: string };
-  output?: { object_key: string; etag: string; size_bytes: number };
-  /** YOLO 事件统计（触球/传球/射门/抢断/控球率 + 真实主角）；HAI 未升级时为 undefined。 */
-  events?: unknown;
-  /** 个人训练专项指标（按 training_item 返回）；HAI 未升级时为 undefined。 */
-  training?: unknown;
   /** 即时分析(VLM)产出的原文与球队看板结构化结果。未识别值为 null，未发生事件为空数组。 */
   text_result?: VlmTextResult;
-  eta_seconds?: number | null;
   created_at: Date;
   updated_at: Date;
   started_at?: Date;
@@ -106,8 +88,7 @@ export interface VlmEvent {
   [key: string]: unknown;
 }
 
-export interface ClaimRequest { worker_id: string; lease_seconds: number }
-export interface LeaseRequest { task_id: string; lease_token: string }
+// 砍掉 YOLO / HAI worker 后，不再需要「领取任务」与「租约续期」的请求结构。
 
 export class ApiError extends Error {
   constructor(public status: number, public code: string, message: string) { super(message); }

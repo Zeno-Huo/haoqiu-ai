@@ -31,11 +31,10 @@ export class TaskService {
     if (!["video/mp4", "video/quicktime"].includes(contentType)) throw new ApiError(415, "UNSUPPORTED_VIDEO", "仅支持 MP4/MOV");
     const uploadId = id("task");
     const inputKey = `inputs/${ownerId}/${uploadId}/source${safeExtension(filename)}`;
-    const outputKey = `outputs/${ownerId}/${uploadId}/annotated.mp4`;
     const created = this.now();
     const ticketExpiresAt = new Date(created.getTime() + this.config.uploadUrlSeconds * 1000);
     const upload: UploadRecord = {
-      _id: uploadId, owner_id: ownerId, input_object_key: inputKey, output_object_key: outputKey,
+      _id: uploadId, owner_id: ownerId, input_object_key: inputKey,
       original_filename: filename, content_type: contentType, expected_size_bytes: size,
       duration_seconds: duration, client_match_id: body.client_match_id ? String(body.client_match_id).slice(0, 128) : undefined,
       status: "pending", created_at: created, ticket_expires_at: ticketExpiresAt,
@@ -52,30 +51,6 @@ export class TaskService {
     };
   }
 
-  async confirmUpload(ownerId: string, uploadId: string, clientMatchId?: string, mode: "deep" | "single" = "deep", jerseyHint?: string, trainingItem?: string): Promise<TaskRecord> {
-    const upload = await this.repo.getUpload(uploadId);
-    if (!upload || upload.owner_id !== ownerId) throw new ApiError(404, "UPLOAD_NOT_FOUND", "上传记录不存在");
-    if (clientMatchId !== undefined && upload.client_match_id !== clientMatchId) {
-      throw new ApiError(409, "CLIENT_MATCH_MISMATCH", "比赛标识与上传票据不一致");
-    }
-    const existing = await this.repo.getTask(uploadId);
-    if (existing) return existing;
-    if (new Date(upload.pending_expires_at).getTime() <= this.now().getTime()) throw new ApiError(409, "UPLOAD_EXPIRED", "待确认上传记录已过期");
-    const metadata = await this.objects.head(upload.input_object_key);
-    if (metadata.sizeBytes !== upload.expected_size_bytes) throw new ApiError(409, "UPLOAD_SIZE_MISMATCH", "上传对象大小与申请不一致");
-    const now = this.now();
-    const task: TaskRecord = {
-      _id: upload._id, owner_id: ownerId, client_match_id: upload.client_match_id,
-      mode, status: "queued", stage: "queued", progress: 0,
-      input_object_key: upload.input_object_key, output_object_key: upload.output_object_key,
-      input: { filename: upload.original_filename, content_type: upload.content_type, size_bytes: metadata.sizeBytes, duration_seconds: upload.duration_seconds },
-      analysis_context: jerseyHint || trainingItem ? { jersey_hint: jerseyHint, training_item: trainingItem } : undefined,
-      raw_lifecycle: { delete_after: addDays(now, this.config.rawRetentionDays) },
-      result_lifecycle: {}, attempt: 0, max_attempts: 3, available_at: now, created_at: now, updated_at: now
-    };
-    return this.repo.confirmUpload(upload, task);
-  }
-
   async taskForUser(ownerId: string, taskId: string): Promise<TaskRecord> {
     // 超时判定与读取合并为一次：既省掉一次 COS 读请求（轮询是高频操作），又不需要额外定时触发器。
     // 背景：worker 不在线时 queued 任务会永远停着（attempt 恒为 0），前端无限轮询产生 COS 读请求费。
@@ -90,24 +65,33 @@ export class TaskService {
     return task;
   }
 
-  /** 即时分析(VLM)：基于已上传的视频创建任务，由 haoqiu-vlm 异步处理。 */
-  // 重要：instant 任务必须用独立 _id（instant_<uploadId>），绝不能与同视频的 GPU 检测任务（_id=uploadId）撞号。
-  // 旧实现用 uploadId 作 _id，导致 createInstantJob 在 GPU 任务已创建后立即命中它并直接返回，
-  // VLM 个人表现分析从未真正创建——个人比赛页面因此永远出不了个人报告（且 GPU 卡住时整体卡死）。
+  /** 即时分析(VLM)：基于已上传的视频创建任务，由 haoqiu-vlm 云函数异步处理。
+   *  团队比赛用 instant_<uploadId>，个人比赛用 <uploadId>，两者 id 隔离、互不覆盖。 */
   async createInstantJob(ownerId: string, uploadId: string, clientMatchId?: string, analysisContext?: TaskRecord["analysis_context"]): Promise<TaskRecord> {
     const upload = await this.repo.getUpload(uploadId);
     if (!upload || upload.owner_id !== ownerId) throw new ApiError(404, "UPLOAD_NOT_FOUND", "上传记录不存在");
     const instantId = `instant_${uploadId}`;
     const existing = await this.repo.getTask(instantId);
     if (existing) return existing;
+
+    // 上传完成校验：原先由 confirmUpload（GPU 链路）负责，砍掉 YOLO 后必须在这里补上。
+    // 否则用户视频还没传完就点分析，VLM 会拿到残缺文件、产出无意义的结果。
+    if (new Date(upload.pending_expires_at).getTime() <= this.now().getTime()) {
+      throw new ApiError(409, "UPLOAD_EXPIRED", "上传记录已过期，请重新上传视频");
+    }
+    const metadata = await this.objects.head(upload.input_object_key);
+    if (metadata.sizeBytes !== upload.expected_size_bytes) {
+      throw new ApiError(409, "UPLOAD_SIZE_MISMATCH", "视频尚未上传完成，请等待上传结束后再分析");
+    }
+
     const now = this.now();
     const task: TaskRecord = {
       _id: instantId, owner_id: ownerId, client_match_id: upload.client_match_id || clientMatchId,
       mode: "instant", analysis_context: analysisContext, status: "queued", stage: "queued", progress: 0,
-      input_object_key: upload.input_object_key, output_object_key: upload.output_object_key,
-      input: { filename: upload.original_filename, content_type: upload.content_type, size_bytes: upload.expected_size_bytes, duration_seconds: upload.duration_seconds },
+      input_object_key: upload.input_object_key,
+      input: { filename: upload.original_filename, content_type: upload.content_type, size_bytes: metadata.sizeBytes, duration_seconds: upload.duration_seconds },
       raw_lifecycle: { delete_after: addDays(now, this.config.rawRetentionDays) },
-      result_lifecycle: {}, attempt: 0, max_attempts: 1, available_at: now, created_at: now, updated_at: now
+      created_at: now, updated_at: now
     };
     return this.repo.createInstantTask(task);
   }
@@ -122,84 +106,25 @@ export class TaskService {
   async failInstant(taskId: string, code: string, message: string): Promise<TaskRecord> {
     return this.repo.saveInstantResult(taskId, { status: "failed", stage: "failed", error: { code, message } }, this.now());
   }
-  async resultUrl(ownerId: string, taskId: string) {
-    const task = await this.taskForUser(ownerId, taskId);
-    if (task.status !== "succeeded" || !task.output) throw new ApiError(409, "RESULT_NOT_READY", "检测结果尚未生成");
-    return {
-      url: await this.objects.signedGetUrl(task.output.object_key, this.config.resultUrlSeconds),
-      expires_at: new Date(this.now().getTime() + this.config.resultUrlSeconds * 1000).toISOString(),
-      content_type: "video/mp4" as const
-    };
-  }
-  async claim(body: any) {
-    const workerId = String(body.worker_id || "");
-    if (!/^[a-zA-Z0-9:_-]{1,128}$/.test(workerId)) throw new ApiError(400, "INVALID_WORKER_ID", "worker_id is invalid");
-    const leaseSeconds = Math.min(number(body.lease_seconds, "lease_seconds"), this.config.maxLeaseSeconds);
-    const task = await this.repo.claim(workerId, leaseSeconds, this.now());
-    if (!task) return null;
-    const [inputDownloadUrl, outputUploadUrl] = await Promise.all([
-      this.objects.signedGetUrl(task.input_object_key, this.config.workerUrlSeconds),
-      this.objects.signedPutUrl(task.output_object_key, this.config.workerUrlSeconds)
-    ]);
-    return {
-      ...task,
-      input_download_url: inputDownloadUrl,
-      output_upload_url: outputUploadUrl,
-      signed_url_expires_at: new Date(this.now().getTime() + this.config.workerUrlSeconds * 1000).toISOString()
-    };
-  }
-  renew(body: any) { return this.repo.renew(String(body.task_id), String(body.lease_token), Math.min(number(body.lease_seconds, "lease_seconds"), this.config.maxLeaseSeconds), this.now()); }
-  progress(body: any) {
-    const progress = Number(body.progress);
-    if (!Number.isFinite(progress) || progress < 0 || progress > 99) throw new ApiError(400, "INVALID_PROGRESS", "progress must be between 0 and 99");
-    const stages = ["probing", "detecting", "rendering"];
-    if (!stages.includes(body.stage)) throw new ApiError(400, "INVALID_STAGE", "stage is invalid");
-    return this.repo.progress(String(body.task_id), String(body.lease_token), { progress, stage: body.stage, eta_seconds: body.eta_seconds == null ? null : Math.max(0, Number(body.eta_seconds)) }, this.now());
-  }
-  complete(body: any) {
-    if (!body.idempotency_key || String(body.idempotency_key).length > 128) throw new ApiError(400, "INVALID_IDEMPOTENCY_KEY", "idempotency_key is required");
-    const output = body.output || {};
-    return this.repo.getTask(String(body.task_id)).then((task) => {
-      if (!task) throw new ApiError(404, "TASK_NOT_FOUND", "任务不存在");
-      if (String(output.object_key) !== task.output_object_key) throw new ApiError(400, "INVALID_OUTPUT_KEY", "output object key does not match task assignment");
-      const now = this.now();
-      const resultPayload = body?.result || {};
-      const detectionPayload = resultPayload?.detection || {};
-      return this.repo.complete(task._id, String(body.lease_token), String(body.idempotency_key), {
-        output: { object_key: task.output_object_key, etag: String(output.etag || ""), size_bytes: number(output.size_bytes, "output.size_bytes") },
-        diagnostics: body.diagnostics ?? detectionPayload?.diagnostics,
-        events: detectionPayload?.events ?? resultPayload?.events ?? undefined,
-        training: detectionPayload?.training ?? resultPayload?.training ?? undefined,
-        warnings: Array.isArray(body.warnings) ? body.warnings.slice(0, 20).map(String) : [], model: body.model,
-        result_lifecycle: { delete_after: addDays(now, this.config.resultRetentionDays) }
-      }, now);
-    });
-  }
-  fail(body: any) {
-    const error = body.error || {};
-    if (!error.code || !error.message) throw new ApiError(400, "INVALID_ERROR", "error.code and error.message are required");
-    return this.repo.fail(String(body.task_id), String(body.lease_token), body.retryable === true,
-      { code: String(error.code).slice(0, 64), message: String(error.message).slice(0, 500) }, this.now());
-  }
-
   /** 删除任务并释放它占用的 COS 存储。
    *  网页端删除必须走这里：此前 History 只删 localStorage 记录，云端任务 JSON 与视频永不释放，
    *  导致每次测试上传的视频都永久堆积在桶里。
-   *  注意 deep 与 instant 任务共用同一段上传视频，因此只有确认没有其他任务仍引用该视频时才删源文件。 */
+   *  注意同一段上传视频可能同时挂着团队与个人两个任务，因此只有确认没有其他任务仍引用时才删源文件。 */
   async deleteTaskForUser(ownerId: string, taskId: string): Promise<{ task_id: string; deleted_objects: string[]; kept_objects: string[] }> {
     const task = await this.repo.getTask(taskId);
     if (!task || task.owner_id !== ownerId) throw new ApiError(404, "TASK_NOT_FOUND", "任务不存在");
 
     const deleted: string[] = [];
     const kept: string[] = [];
-    const keys = [task.input_object_key, task.output_object_key].filter((k): k is string => Boolean(k));
+    // 砍掉 YOLO 后不再有标注视频（output_object_key），只回收原始上传视频。
+    const keys = [task.input_object_key].filter((k): k is string => Boolean(k));
 
     // 引用检查必须在删除自身之前完成，并显式排除自身：
     // 若依赖"先删自己再查表"的隐式顺序，一旦有人调整顺序，判断就会把自己也算作引用方，导致永远不放行删视频。
     const siblings = (await this.repo.findTasksByInputKey(task.input_object_key)).filter((t) => t._id !== taskId);
 
     if (siblings.length > 0) {
-      // 同一段视频还有别的任务在用（典型场景：deep 与 instant 并存），只删任务记录、保留视频文件。
+      // 同一段视频还有别的任务在用（团队 + 个人并存），只删任务记录、保留视频文件。
       await this.repo.deleteTask(taskId);
       kept.push(...keys);
       return { task_id: taskId, deleted_objects: deleted, kept_objects: kept };

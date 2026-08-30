@@ -1,49 +1,105 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import type { DetectionTrainingMetrics } from '../cloudDetectionTypes'
-import { useDetectionFlow } from '../lib/useDetectionFlow'
-import { getMatch } from '../lib/storage'
+import type { CloudDetectionJob } from '../cloudDetectionTypes'
+import { createInstantAnalysisJob, getInstantAnalysisJob, isCloudDetectionConfigured } from '../lib/cloudDetectionApi'
+import { ensureUploadedVideo, type UploadPhase } from '../lib/cloudUploadWorkflow'
+import { getMatch, saveMatch } from '../lib/storage'
+import { getCachedVideoFile } from '../lib/videoFileCache'
+import { parseInstantAnalysis } from '../lib/instantAnalysis'
+import InstantDashboard from '../components/InstantDashboard'
 
-// 分析中轮播小字（与个人比赛同风格，文案改为训练语境）
-const ANALYZING_TIPS = [
-  'AI 正在逐帧识别你的训练动作',
-  '正在统计本次训练的关键指标',
-  '正在为你生成练习建议',
-  '这段视频有点长，请稍候一下',
-]
+async function createWorkflow(
+  matchId: string,
+  file: File | undefined,
+  listener: (phase: UploadPhase, progress: number) => void,
+  context?: { training_item?: string },
+) {
+  const match = getMatch(matchId)
+  if (!match) throw new Error('找不到这段视频')
+  const uploadId = await ensureUploadedVideo(matchId, file, listener)
+  const job = await createInstantAnalysisJob(uploadId, matchId, context)
+  saveMatch({ ...match, cloudUploadId: uploadId, instantJobId: job.job_id, instantAnalysisJob: job })
+  return job
+}
 
-// 各训练项目报告的指标卡定义；HAI 返回 training 字段后按此渲染。
-type MetricCard = { key: keyof DetectionTrainingMetrics; label: string; pct?: boolean }
-const TRAINING_SCHEMAS: Record<string, MetricCard[]> = {
-  '射门': [{ key: 'on_target', label: '射正' }, { key: 'success_rate', label: '射正率', pct: true }, { key: 'avg_power', label: '平均力量' }],
-  '传球': [{ key: 'success', label: '成功传球' }, { key: 'success_rate', label: '成功率', pct: true }],
-  '停球': [{ key: 'success', label: '成功停球' }, { key: 'success_rate', label: '停球成功率', pct: true }],
-  '带球': [{ key: 'turns', label: '变向次数' }, { key: 'success_rate', label: '连贯率', pct: true }],
-  '颠球': [{ key: 'best_streak', label: '最长连续' }, { key: 'reps', label: '总次数' }],
-  '头球': [{ key: 'success', label: '成功争顶' }, { key: 'success_rate', label: '成功率', pct: true }],
-  '变向过人': [{ key: 'turns', label: '变向次数' }, { key: 'success_rate', label: '过人成功率', pct: true }],
-  '射门力量': [{ key: 'avg_power', label: '平均力量' }, { key: 'on_target', label: '射正' }],
+function Narrative({ content }: { content: string }) {
+  return (
+    <article className="instant-narrative">
+      <span>练习建议</span>
+      {content.split(/\n{2,}/).filter(Boolean).map((block, index) => <p key={index}>{block.replace(/^[-·•*]\s*/, '')}</p>)}
+    </article>
+  )
 }
 
 export default function TrainingResult() {
   const { id } = useParams()
-  const initialMatch = id ? getMatch(id) : undefined
-  const trainingItem = initialMatch?.ourTeamContext?.trainingItem?.trim()
-  const focusHint = initialMatch?.ourTeamContext?.jerseyHint?.trim()
-  const flow = useDetectionFlow(id, { focusHint, trainingItem })
-  const { job, resultVideo, configured, isUploading, isAnalyzing, isReportReady, gpuFailed, unifiedProgress, stageLabel, message } = flow
+  const initialMatch = useMemo(() => (id ? getMatch(id) : undefined), [id])
+  const [job, setJob] = useState<CloudDetectionJob | undefined>(initialMatch?.instantAnalysisJob)
+  const [phase, setPhase] = useState<UploadPhase>('ticket')
+  const [uploadProgress, setUploadProgress] = useState(0)
+  const [message, setMessage] = useState('')
+  const [retryNonce, setRetryNonce] = useState(0)
+  const configured = isCloudDetectionConfigured()
 
-  const [tipIndex, setTipIndex] = useState(0)
   useEffect(() => {
-    if (!isAnalyzing) return
-    const t = window.setInterval(() => setTipIndex((i) => (i + 1) % ANALYZING_TIPS.length), 2600)
-    return () => window.clearInterval(t)
-  }, [isAnalyzing])
+    if (!initialMatch || !configured) return
+    let cancelled = false
+    let timer: number | undefined
+    const match = initialMatch
+    const trainingItem = match.ourTeamContext?.trainingItem?.trim()
+    const jobContext = trainingItem ? { training_item: trainingItem } : undefined
+    async function run() {
+      try {
+        const latest = getMatch(match.id) ?? match
+        let jobId = latest.instantJobId
+        if (!jobId) {
+          const file = getCachedVideoFile(match.id)
+          if (!latest.cloudUploadId && !file) throw new Error('视频已失效，请重新选择')
+          const created = await createWorkflow(match.id, file, (next, progress) => {
+            if (!cancelled) { setPhase(next); setUploadProgress(progress) }
+          }, jobContext)
+          if (cancelled) return
+          jobId = created.job_id
+          setJob(created)
+        }
+        async function poll() {
+          if (!jobId || cancelled) return
+          try {
+            const current = await getInstantAnalysisJob(jobId)
+            if (cancelled) return
+            setJob(current); setMessage('')
+            const saved = getMatch(match.id) ?? match
+            saveMatch({ ...saved, instantJobId: current.job_id, instantAnalysisJob: current })
+            if (current.status !== 'succeeded' && current.status !== 'failed') timer = window.setTimeout(poll, 3000)
+          } catch { if (!cancelled) setMessage('暂时无法获取进度') }
+        }
+        await poll()
+      } catch (error) { if (!cancelled) setMessage(error instanceof Error ? error.message : '分析没有完成') }
+    }
+    void run()
+    return () => { cancelled = true; if (timer) window.clearTimeout(timer) }
+  }, [configured, initialMatch, retryNonce])
 
-  if (!initialMatch) return <div className="page-shell grid place-items-center px-4"><section className="panel max-w-md p-6 text-center"><p className="text-[var(--text-secondary)]">找不到这段训练记录。</p><Link className="btn-primary mt-5" to="/match/new?mode=training">重新选择视频</Link></section></div>
+  if (!initialMatch) {
+    return (
+      <div className="page-shell grid place-items-center px-4">
+        <Link className="btn-primary" to="/">返回首页</Link>
+      </div>
+    )
+  }
 
-  const training = job?.training
-  const schema = (trainingItem && TRAINING_SCHEMAS[trainingItem]) || []
+  const success = job?.status === 'succeeded'
+  const failed = job?.status === 'failed'
+  const parsed = job ? parseInstantAnalysis(job) : {}
+  const hasUploadId = !!initialMatch.cloudUploadId || !!job
+  const isUploading = !hasUploadId
+  const isAnalyzing = hasUploadId && !success && !failed
+  const isReportReady = success
+  const trainingItem = initialMatch.ourTeamContext?.trainingItem?.trim()
+  const progress = job ? Math.min(100, Math.max(0, job.progress)) : uploadProgress
+  const stage = !job
+    ? (phase === 'uploading' ? '正在上传视频' : '正在准备视频')
+    : job.status === 'queued' ? '正在等待分析' : '正在生成结果'
 
   const steps = [
     { key: 'upload', label: '上传视频', done: !isUploading, active: isUploading },
@@ -96,73 +152,43 @@ export default function TrainingResult() {
               训练项目：{trainingItem || '未指定'}
             </div>
 
-            {/* 训练专项指标：HAI 返回 training 字段后按项目渲染对应卡片 */}
-            {training ? (
-              <div className="personal-stats mt-5">
-                {schema.length > 0 ? schema.map((card) => {
-                  const raw = training[card.key] as number | null | undefined
-                  if (raw === null || raw === undefined) return null
-                  const display = card.pct ? `${Math.round((raw as number) * 100)}%` : String(raw)
-                  return (
-                    <div className="personal-stat" key={card.key}>
-                      <span className="personal-stat-value font-score">{display}</span>
-                      <span className="personal-stat-label">{card.label}</span>
-                    </div>
-                  )
-                }) : (
-                  <div className="personal-stat"><span className="personal-stat-value font-score">{training.reps ?? training.success ?? '—'}</span><span className="personal-stat-label">完成次数</span></div>
-                )}
-              </div>
+            {parsed.dashboard ? (
+              <InstantDashboard dashboard={parsed.dashboard} matchId={initialMatch.id} />
+            ) : parsed.narrative ? (
+              <div className="mt-5"><Narrative content={parsed.narrative} /></div>
             ) : (
               <div className="mt-5 rounded-md border border-[var(--line)] bg-[var(--content)] p-4">
-                <p className="text-sm font-medium text-[var(--text-secondary)]">训练专项指标正在升级</p>
-                <p className="mt-1 text-xs leading-5 text-[var(--text-muted)]">
-                  按「{trainingItem || '该训练项目'}」统计的专项指标（射正 / 成功率 / 连续次数等）由 AI 逐帧识别得出，将在检测模型升级后自动补齐，无需重新上传视频。
-                </p>
+                <p className="text-sm font-medium text-[var(--text-secondary)]">结果正在整理</p>
+                <p className="mt-1 text-xs leading-5 text-[var(--text-muted)]">AI 已看完这段训练，正在生成你的练习建议。</p>
               </div>
             )}
-
-            {/* 一句话练习建议（HAI 基于指标生成，真实不编） */}
-            {training?.advice ? (
-              <div className="mt-4 rounded-md border border-[var(--ai)]/30 bg-[var(--ai)]/5 p-4">
-                <p className="text-sm font-semibold text-[var(--ai)]">下次只练这个</p>
-                <p className="mt-1 text-sm leading-6 text-[var(--text-primary)]">{training.advice}</p>
-              </div>
-            ) : training ? (
-              <p className="mt-4 text-xs text-[var(--text-muted)]">练习建议正在生成…</p>
-            ) : null}
-
-            {/* 带标注训练画面（看动作形态） */}
-            {resultVideo ? (
-              <div className="mt-4 rounded-md border border-[var(--line)] bg-[var(--content)] p-4">
-                <p className="mb-3 text-sm font-semibold text-[var(--text-primary)]">带标注训练画面</p>
-                <video className="w-full rounded-md border border-[var(--line)] bg-black" controls preload="metadata" src={resultVideo.url} />
-                <p className="mt-3 text-xs text-[var(--text-muted)]">AI 已为每帧画面标注球员与球的位置，方便你回看动作形态。</p>
-              </div>
-            ) : null}
           </section>
         ) : (
           <section className="panel p-5 sm:p-6">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div><p className="font-medium text-[var(--text-primary)]">{initialMatch.videoName}</p></div>
-              <span className="status-text"><span className="status-dot" />{isUploading ? '上传中' : gpuFailed ? '未完成' : '分析中'}</span>
+              <span className="status-text">
+                <span className="status-dot" />
+                {isUploading ? '上传中' : failed ? '未完成' : '分析中'}
+              </span>
             </div>
             <div className="mt-7 h-2.5 overflow-hidden rounded-full bg-[var(--surface-raised)]">
-              <div className="h-full rounded-full bg-[var(--ai)] transition-[width] duration-500 ease-out" style={{ width: `${Math.max(0, Math.min(100, unifiedProgress))}%` }} />
+              <div className="h-full rounded-full bg-[var(--ai)] transition-[width] duration-500 ease-out" style={{ width: `${Math.max(0, Math.min(100, progress))}%` }} />
             </div>
             <div className="mt-3 flex justify-between text-sm text-[var(--text-secondary)]">
-              <span>{isAnalyzing ? ANALYZING_TIPS[tipIndex] : stageLabel}</span>
-              <b className="font-score text-[var(--ai)]">{Math.round(unifiedProgress)}%</b>
+              <span>{stage}</span>
+              <b className="font-score text-[var(--ai)]">{Math.round(progress)}%</b>
             </div>
             {message && (
               <div className="mt-6 rounded-md border border-[var(--attack)] bg-[var(--content)] p-4 text-sm text-[var(--attack)]">
                 {message}
-                <div className="mt-4"><Link className="btn-secondary" to="/match/new?mode=training">重新选择视频</Link></div>
+                <div className="mt-4"><button className="btn-secondary" type="button" onClick={() => setRetryNonce((value) => value + 1)}>再试一次</button></div>
               </div>
             )}
-            {gpuFailed && (
+            {failed && (
               <div className="mt-6 rounded-md border border-[var(--danger)] bg-[var(--content)] p-4">
-                <p className="text-sm text-[var(--danger)]">{job?.error?.message || '视频标注没有完成'}</p>
+                <p className="text-sm text-[var(--danger)]">{job?.error?.message || '这次分析没有完成'}</p>
+                <div className="mt-4"><Link className="btn-secondary" to="/match/new?mode=training">重新选择视频</Link></div>
               </div>
             )}
           </section>

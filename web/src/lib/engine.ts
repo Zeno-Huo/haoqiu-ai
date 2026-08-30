@@ -1,6 +1,6 @@
 // 本地模拟 AI 分析引擎
 // 生成「真实感、确定性」的客观数据，未来可替换为真实视觉模型管线。
-// 对外暴露 analyzeMatch() 接口，后续接入 YOLO/ByteTrack/视觉大模型时仅需替换本文件实现。
+// 对外暴露 analyzeMatch() 接口，后续接入视觉大模型（VLM）真实管线时仅需替换本文件实现。
 
 import type {
   EventOutcome,

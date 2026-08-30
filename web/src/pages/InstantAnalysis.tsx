@@ -72,7 +72,7 @@ export default function InstantAnalysis() {
   const failed = job?.status === 'failed'
   const parsed = job ? parseInstantAnalysis(job) : {}
   const progress = job ? Math.min(100, Math.max(0, job.progress)) : uploadProgress
-  const stage = !job ? (phase === 'uploading' ? '正在上传视频' : '正在准备视频') : job.status === 'queued' ? '正在等待分析' : job.status === 'running' ? '正在看这场球' : '正在生成结果'
+  const stage = !job ? (phase === 'uploading' ? '正在上传视频' : '正在准备视频') : job.status === 'queued' ? '正在等待分析' : '正在生成结果'
 
   return <div className="page-shell px-4 py-8"><div className="mx-auto max-w-3xl">
     <header className="analysis-header"><Link to="/">← 首页</Link><h1>{success ? '分析完成' : failed ? '分析未完成' : '正在看这场球'}</h1><p>{initialMatch.videoName}</p></header>

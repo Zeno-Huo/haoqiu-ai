@@ -1,5 +1,4 @@
 // 好球Ai · MVP 阶段一 数据类型定义
-import type { DetectionJob } from './detectionTypes'
 import type { CloudDetectionJob } from './cloudDetectionTypes'
 
 export type MatchType = '5v5' | '7v7' | '11v11'
@@ -75,19 +74,16 @@ export interface Match {
   identificationStatus?: IdentificationStatus
   /** 画面候选球员 ID -> 球队成员 ID。只有出现在此表中的身份才视为已由队长确认。 */
   playerIdentityMap?: Record<string, string>
-  /** 真实检测任务可刷新恢复；与本地球队复盘 Demo 分开。 */
+  /** 真实检测任务可刷新恢复；与本地球队复盘 Demo 分开（保留旧云端检测任务 id 用于清理孤儿数据）。 */
   detectionJobId?: string
-  detectionJob?: DetectionJob
   /** COS 整段视频已上传后才持久化 upload_id；不保存任何签名 URL。 */
   cloudUploadId?: string
   cloudJobId?: string
   cloudDetectionJob?: CloudDetectionJob
-  /** 深度复盘 GPU 逐帧检测的真实统计概览；与 engine.ts 演示数据相互独立。 */
-  detectionStats?: DetectionStats
   /** 即时分析（视觉大模型文字复盘）任务；与深度复盘任务相互独立、可并存。 */
   instantJobId?: string
   instantAnalysisJob?: CloudDetectionJob
-  /** single：个人比赛用同一条 YOLO 检测链路生成单人候选与带框视频；training：个人训练。 */
+  /** single：个人比赛用 VLM 出文字复盘；training：个人训练用 VLM 出练习建议。 */
   analysisMode?: 'single' | 'training'
   trackingJobId?: string
   trackingDetectionJob?: CloudDetectionJob
@@ -152,28 +148,6 @@ export interface PlayerAnalysis {
   events: PlayerEvent[]
   title?: string // 称号（如「抢断王」），全队某指标第一时授予，无称号可为空
   highlight?: Highlight // 亮点项（位置重点指标里该球员最突出者），用于看板放大展示
-}
-
-/** 深度复盘真实检测概览：由 GPU 逐帧目标检测得出，非演示数据。 */
-export interface DetectionStats {
-  modelName?: string
-  modelVersion?: string
-  filename?: string
-  durationSeconds?: number
-  resolution?: string
-  fps?: number
-  processedFrames: number
-  sourceFrames: number
-  fullVideoProcessed: boolean
-  classesSeen: string[]
-  frameDetectionsByClass: Record<string, number>
-  /** 真实可派生指标（基于各类别被检测到的帧数） */
-  playerFrames: number
-  ballFrames: number
-  refereeFrames: number
-  playerPresenceRate: number // playerFrames / processedFrames，百分比
-  ballPresenceRate: number // ballFrames / processedFrames，百分比
-  generatedAt: string
 }
 
 export const MATCH_TYPES: MatchType[] = ['5v5', '7v7', '11v11']

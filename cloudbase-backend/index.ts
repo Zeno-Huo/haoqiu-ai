@@ -1,12 +1,12 @@
 import cloudbase from "@cloudbase/node-sdk";
-import { cloudbaseContextUserId, normalizeHeaders, requireUser, requireWorker, userIdFromBearer } from "./src/auth";
+import { cloudbaseContextUserId, normalizeHeaders, requireUser, userIdFromBearer } from "./src/auth";
 import { loadConfig, loadTencentCredentials } from "./src/config";
 import { TencentCosStore } from "./src/cos";
 import { CosRepository } from "./src/cos-repository";
 import { TaskService } from "./src/service";
 import { ApiError } from "./src/types";
 import type { TaskRecord } from "./src/types";
-import { haiCompletionBody, publicTask, workerTask } from "./src/http-contract";
+import { publicTask } from "./src/http-contract";
 import { corsHeaders, requireAllowedOrigin, requireAllowedPreflight } from "./src/http-cors";
 
 // 吞掉未处理的 Promise rejection，避免云函数进程崩溃（历史遗留：旧 SDK 的 createCollection
@@ -115,28 +115,12 @@ export const main = async (event: any, context: any) => {
       diag.lastUnhandled = lastUnhandled;
       return respond(200, diag);
     }
-    if (route.startsWith("/worker/") || route.startsWith("/v1/worker/")) {
-      requireWorker(event, config.workerToken, config.envId);
-    }
     const api = getService();
 
     if (method === "POST" && ["/api/v1/cos-upload-tickets", "/api/v1/uploads/ticket"].includes(route)) {
       return respond(201, await api.issueUpload(currentUser(event, context), body));
     }
-    if (method === "POST" && route === "/api/v1/cloud-detection-jobs") {
-      if (!body.upload_id || !body.client_match_id) throw new ApiError(400, "INVALID_INPUT", "upload_id 和 client_match_id 为必填项");
-      const mode = body.mode === "single" ? "single" : "deep";
-      return respond(202, publicTask(await api.confirmUpload(
-        currentUser(event, context), String(body.upload_id), String(body.client_match_id), mode,
-        body.jersey_hint ? String(body.jersey_hint).slice(0, 128) : undefined,
-        body.training_item ? String(body.training_item).slice(0, 128) : undefined
-      )));
-    }
-    let match = route.match(/^\/api\/v1\/uploads\/([^/]+)\/confirm$/);
-    if (method === "POST" && match) {
-      return respond(202, publicTask(await api.confirmUpload(currentUser(event, context), decodeURIComponent(match[1]))));
-    }
-    match = route.match(/^\/api\/v1\/cloud-detection-jobs\/([^/]+)$/);
+    let match = route.match(/^\/api\/v1\/cloud-detection-jobs\/([^/]+)$/);
     if (method === "GET" && match) {
       return respond(200, publicTask(await api.taskForUser(currentUser(event, context), decodeURIComponent(match[1]))));
     }
@@ -152,14 +136,6 @@ export const main = async (event: any, context: any) => {
     match = route.match(/^\/api\/v1\/detection-jobs\/([^/]+)$/);
     if (method === "DELETE" && match) {
       return respond(200, await api.deleteTaskForUser(currentUser(event, context), decodeURIComponent(match[1])));
-    }
-    match = route.match(/^\/api\/v1\/cloud-detection-jobs\/([^/]+)\/artifacts\/annotated-video-url$/);
-    if (method === "POST" && match) {
-      return respond(200, await api.resultUrl(currentUser(event, context), decodeURIComponent(match[1])));
-    }
-    match = route.match(/^\/api\/v1\/detection-jobs\/([^/]+)\/artifacts\/annotated-video$/);
-    if (method === "GET" && match) {
-      return respond(200, await api.resultUrl(currentUser(event, context), decodeURIComponent(match[1])));
     }
     match = route.match(/^\/api\/v1\/instant-analysis\/([^/]+)$/);
     if (method === "GET" && match) {
@@ -190,34 +166,6 @@ export const main = async (event: any, context: any) => {
       return respond(202, publicTask(task));
     }
 
-    if (method === "POST" && route === "/worker/v1/tasks/claim") {
-      const task = await api.claim(body);
-      return task ? respond(200, workerTask(task)) : respond(204, null);
-    }
-    if (method === "POST" && route === "/worker/v1/tasks/renew") return respond(200, workerTask(await api.renew(body)));
-    if (method === "POST" && route === "/worker/v1/tasks/progress") return respond(200, workerTask(await api.progress(body)));
-    if (method === "POST" && route === "/worker/v1/tasks/complete") return respond(200, workerTask(await api.complete(body)));
-    if (method === "POST" && route === "/worker/v1/tasks/fail") return respond(200, workerTask(await api.fail(body)));
-
-    // Canonical private contract consumed by hai-service/pull_worker/cloud_adapters.py.
-    if (method === "POST" && route === "/v1/worker/tasks/claim") {
-      const task = await api.claim(body);
-      return task ? respond(200, { task: workerTask(task) }) : respond(204, null);
-    }
-    match = route.match(/^\/v1\/worker\/tasks\/([^/]+)\/(renew|progress|complete|fail)$/);
-    if (method === "POST" && match) {
-      const taskId = decodeURIComponent(match[1]);
-      const action = match[2];
-      let task: TaskRecord;
-      if (action === "renew") task = await api.renew({ ...body, task_id: taskId });
-      else if (action === "progress") task = await api.progress({ ...body, task_id: taskId });
-      else if (action === "fail") task = await api.fail({ ...body, task_id: taskId });
-      else {
-        const idempotencyKey = normalizeHeaders(event?.headers)["idempotency-key"];
-        task = await api.complete(haiCompletionBody(taskId, body, idempotencyKey));
-      }
-      return respond(200, { accepted: true, task: workerTask(task) });
-    }
     throw new ApiError(404, "NOT_FOUND", "接口不存在");
   } catch (error) {
     const origin = normalizeHeaders(event?.headers).origin || undefined;

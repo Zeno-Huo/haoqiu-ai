@@ -6,14 +6,9 @@ export interface Config {
   region: string;
   uploadUrlSeconds: number;
   pendingUploadSeconds: number;
-  resultUrlSeconds: number;
-  workerUrlSeconds: number;
   rawRetentionDays: number;
-  resultRetentionDays: number;
   maxUploadBytes: number;
   maxDurationSeconds: number;
-  maxLeaseSeconds: number;
-  workerToken?: string;
   allowTestIdentity: boolean;
   allowedWebOrigins: string[];
   vlmProvider: string;
@@ -43,15 +38,10 @@ export const loadConfig = (): Config => ({
   region: process.env.COS_REGION || "ap-shanghai",
   uploadUrlSeconds: Math.min(integer("UPLOAD_URL_SECONDS", 600), 900),
   pendingUploadSeconds: integer("PENDING_UPLOAD_SECONDS", 86400),
-  resultUrlSeconds: Math.min(integer("RESULT_URL_SECONDS", 600), 900),
-  workerUrlSeconds: Math.min(integer("WORKER_URL_SECONDS", 4 * 60 * 60), 6 * 60 * 60),
   rawRetentionDays: integer("RAW_RETENTION_DAYS", 7),
-  resultRetentionDays: integer("RESULT_RETENTION_DAYS", 30),
   // 硬限制放宽：超过 150MB / 5 分钟的视频由 haoqiu-vlm 自动压缩，不再直接拒绝用户
   maxUploadBytes: 1024 * 1024 * 1024,
   maxDurationSeconds: 20 * 60,
-  maxLeaseSeconds: Math.min(integer("MAX_LEASE_SECONDS", 120), 300),
-  workerToken: process.env.WORKER_API_TOKEN,
   allowTestIdentity: process.env.ALLOW_TEST_IDENTITY === "true" && process.env.NODE_ENV !== "production",
   allowedWebOrigins: parseAllowedWebOrigins(process.env.ALLOWED_WEB_ORIGINS),
   vlmProvider: process.env.VLM_PROVIDER || "qwen",
@@ -61,7 +51,7 @@ export const loadConfig = (): Config => ({
   // 给媒体桶挂上 CDN 加速域名后填到这里（如 https://media.example.com）：
   // 签名 URL 只替换域名、签名参数原样保留，CDN 回源仍以源站 Host 校验，鉴权可正常通过。
   cdnBase: (process.env.COS_CDN_BASE || process.env.CDN_BASE || "").trim().replace(/\/$/, "") || undefined,
-  // 排队任务超时：worker 不在线时 queued 任务会永远停着（attempt 恒为 0，够不到 max_attempts），
-  // 前端会一直轮询它们。超过这个时长仍未被领取就判为失败，终止无效轮询与随之而来的 COS 请求费。
+  // 排队任务超时：VLM 云函数若迟迟没处理完、或异常退出没回写结果，任务会永远停在 queued，
+  // 前端会一直轮询它们。超过这个时长就判为失败，终止无效轮询与随之而来的 COS 请求费。
   queuedTtlSeconds: integer("QUEUED_TTL_SECONDS", 1800)
 });
