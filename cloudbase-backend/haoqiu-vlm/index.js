@@ -35,6 +35,11 @@ const vlmProvider = process.env.VLM_PROVIDER || "qwen";
 const vlmApiKey = process.env.VLM_API_KEY || process.env.DASHSCOPE_API_KEY;
 const vlmModel = process.env.VLM_MODEL || "qwen-vl-max";
 
+// 视频桶的 CDN 加速域名（如 https://media.example.com）。未配置时签出的仍是 COS 源站地址，行为不变。
+// 配置后：同一段视频的签名 URL 域名换成 CDN，ffmpeg 与多轮千问调用共用同一个 URL，
+// 只有首次触发 CDN 回源，其余命中边缘缓存，单场分析的 COS 外网下行流量从 ~5x 视频大小降到 ~1x。
+const cdnBase = (process.env.COS_CDN_BASE || process.env.CDN_BASE || "").trim().replace(/\/$/, "");
+
 // 视频采样参数：让千问自己负责采样，不再本地抽帧（避免维护 FFmpeg 抽帧逻辑）。
 // 体育高速运动场景用高于默认(2)的 fps；max_frames 取 qwen-vl-max 抽帧上限 512；
 // total_pixels 取 qwen-vl-max 总像素上限 67108864（约 65536 图像 token）。均可 env 覆盖。
@@ -60,11 +65,18 @@ function getCos() {
   return cosInstance;
 }
 
+/** 把 COS 源站签名 URL 的域名换成 CDN 加速域名，签名参数原样保留（CDN 回源仍以源站 Host 校验）。 */
+function applyCdnDomain(url) {
+  if (!cdnBase) return url;
+  const base = cdnBase.replace(/\/+$/, "");
+  return url.replace(/^https?:\/\/[^/]+\.cos\.[^/]*\.myqcloud\.com/i, base);
+}
+
 function signedGetUrl(key, expires) {
   return new Promise((resolve, reject) => {
     getCos().getObjectUrl(
       { Bucket: bucket, Region: region, Key: key, Method: "GET", Sign: true, Expires: expires },
-      (error, data) => (error ? reject(error) : resolve(data.Url))
+      (error, data) => (error ? reject(error) : resolve(applyCdnDomain(data.Url)))
     );
   });
 }

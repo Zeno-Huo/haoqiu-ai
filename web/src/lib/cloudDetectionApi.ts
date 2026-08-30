@@ -33,7 +33,7 @@ const API_BASE =
   'https://haoqiu-ai-prod-d3g2cm2xn3255c273.service.tcloudbase.com/haoqiu-api'
 
 /** 通过 HTTP 访问服务直调后端；前端附带 CloudBase 匿名登录的访问令牌，后端从中解析用户身份。 */
-async function invoke<T>(method: 'GET' | 'POST', path: string, payload?: Record<string, unknown>, expectedStatus?: number): Promise<T> {
+async function invoke<T>(method: 'GET' | 'POST' | 'DELETE', path: string, payload?: Record<string, unknown>, expectedStatus?: number): Promise<T> {
   const accessToken = await getCloudBaseAccessToken()
   const url = `${API_BASE}${path}`
 
@@ -129,4 +129,20 @@ export function createInstantAnalysisJob(uploadId: string, clientMatchId: string
 
 export function getInstantAnalysisJob(jobId: string): Promise<CloudDetectionJob> {
   return invoke('GET', `/api/v1/instant-analysis/${encodeURIComponent(jobId)}`)
+}
+
+export interface DeleteDetectionJobResult {
+  task_id: string
+  deleted_objects: string[]
+  kept_objects: string[]
+}
+
+/** 删除云端任务并释放它占用的 COS 视频存储。
+ *  此前网页端"删除"只清 localStorage，云端任务 JSON 与视频永不释放，测试视频因此一直堆积。 */
+export function deleteCloudDetectionJob(jobId: string): Promise<DeleteDetectionJobResult> {
+  return invoke('DELETE', `/api/v1/cloud-detection-jobs/${encodeURIComponent(jobId)}`)
+}
+
+export function deleteInstantAnalysisJob(jobId: string): Promise<DeleteDetectionJobResult> {
+  return invoke('DELETE', `/api/v1/instant-analysis/${encodeURIComponent(jobId)}`)
 }

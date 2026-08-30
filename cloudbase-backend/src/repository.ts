@@ -14,6 +14,15 @@ export interface TaskRepository {
   fail(taskId: string, token: string, retryable: boolean, error: { code: string; message: string }, now: Date): Promise<TaskRecord>;
   createInstantTask(task: TaskRecord): Promise<TaskRecord>;
   saveInstantResult(taskId: string, patch: Partial<TaskRecord>, now: Date): Promise<TaskRecord>;
+  /** 彻底删除任务 JSON（网页端删除必须走这里，否则只删浏览器本地记录、云端文件永存）。 */
+  deleteTask(id: string): Promise<void>;
+  deleteUpload(id: string): Promise<void>;
+  /** 找出仍引用同一段原始视频的所有任务，用于判断视频能否安全删除。 */
+  findTasksByInputKey(inputObjectKey: string): Promise<TaskRecord[]>;
+  /** 单个任务的排队超时判定：queued/retry_wait 且超过 TTL 则标记为失败并返回新记录；
+   *  未过期时原样返回任务本身（让调用方复用这次读取，避免二次读取把轮询请求费翻倍）；任务不存在才返回 null。
+   *  刻意做成"按任务判定"而非遍历全表，避免每次前端轮询都扫一遍所有任务、反而放大 COS 读请求费。 */
+  expireTaskIfStale(taskId: string, now: Date, ttlSeconds: number): Promise<TaskRecord | null>;
 }
 
 const one = <T>(result: any): T | null => (result?.data?.[0] as T | undefined) || null;
@@ -125,6 +134,30 @@ export class CloudBaseRepository implements TaskRepository {
     if (!task) throw new ApiError(404, "TASK_NOT_FOUND", "任务不存在");
     const update: Partial<TaskRecord> = { ...patch, updated_at: now };
     if (patch.status === "succeeded" && !task.completed_at) update.completed_at = now;
+    await this.db.collection("haoqiu_detection_tasks").doc(taskId).update(update);
+    return { ...task, ...update } as TaskRecord;
+  }
+
+  async deleteTask(id: string): Promise<void> {
+    await this.db.collection("haoqiu_detection_tasks").doc(id).remove();
+  }
+  async deleteUpload(id: string): Promise<void> {
+    await this.db.collection("haoqiu_uploads").doc(id).remove();
+  }
+  async findTasksByInputKey(inputObjectKey: string): Promise<TaskRecord[]> {
+    const res = await this.db.collection("haoqiu_detection_tasks").where({ input_object_key: inputObjectKey }).get();
+    return (res?.data || []) as TaskRecord[];
+  }
+  async expireTaskIfStale(taskId: string, now: Date, ttlSeconds: number): Promise<TaskRecord | null> {
+    const task = one<TaskRecord>(await this.db.collection("haoqiu_detection_tasks").doc(taskId).get());
+    if (!task) return null;
+    // 未命中过期条件时原样返回，让调用方复用这次读取，不必二次查询。
+    if (!["queued", "retry_wait"].includes(task.status)) return task;
+    if (new Date(task.created_at).getTime() > now.getTime() - ttlSeconds * 1000) return task;
+    const update = {
+      status: "failed", stage: "failed", updated_at: now, completed_at: now,
+      error: { code: "STALE_QUEUED", message: "任务排队超时，未检测到可处理的工作节点" }
+    };
     await this.db.collection("haoqiu_detection_tasks").doc(taskId).update(update);
     return { ...task, ...update } as TaskRecord;
   }

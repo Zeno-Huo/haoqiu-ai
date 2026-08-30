@@ -19,6 +19,8 @@ export interface Config {
   vlmProvider: string;
   vlmApiKey?: string;
   vlmModel: string;
+  cdnBase?: string;
+  queuedTtlSeconds: number;
 }
 
 export const loadTencentCredentials = (env: NodeJS.ProcessEnv = process.env) => ({
@@ -54,5 +56,12 @@ export const loadConfig = (): Config => ({
   allowedWebOrigins: parseAllowedWebOrigins(process.env.ALLOWED_WEB_ORIGINS),
   vlmProvider: process.env.VLM_PROVIDER || "qwen",
   vlmApiKey: process.env.VLM_API_KEY || process.env.DASHSCOPE_API_KEY,
-  vlmModel: process.env.VLM_MODEL || "qwen-vl-plus"
+  vlmModel: process.env.VLM_MODEL || "qwen-vl-plus",
+  // COS 外网下行流量是本项目主要云成本：VLM 每轮分析、前端回放都从源站拖整段视频。
+  // 给媒体桶挂上 CDN 加速域名后填到这里（如 https://media.example.com）：
+  // 签名 URL 只替换域名、签名参数原样保留，CDN 回源仍以源站 Host 校验，鉴权可正常通过。
+  cdnBase: (process.env.COS_CDN_BASE || process.env.CDN_BASE || "").trim().replace(/\/$/, "") || undefined,
+  // 排队任务超时：worker 不在线时 queued 任务会永远停着（attempt 恒为 0，够不到 max_attempts），
+  // 前端会一直轮询它们。超过这个时长仍未被领取就判为失败，终止无效轮询与随之而来的 COS 请求费。
+  queuedTtlSeconds: integer("QUEUED_TTL_SECONDS", 1800)
 });

@@ -22,7 +22,8 @@ export const requireAllowedOrigin = (origin: string | undefined, allowed: readon
 };
 
 export const requireAllowedPreflight = (requestedMethod?: string, requestedHeaders?: string): void => {
-  if (requestedMethod && !["GET", "POST", "OPTIONS"].includes(requestedMethod.toUpperCase())) {
+  // DELETE 用于网页端删除云端任务及其视频：此前 History 只删 localStorage，云端文件永不释放。
+  if (requestedMethod && !["GET", "POST", "DELETE", "OPTIONS"].includes(requestedMethod.toUpperCase())) {
     throw new ApiError(403, "CORS_METHOD_DENIED", "跨域请求方法不允许");
   }
   const allowedHeaders = new Set(["authorization", "content-type"]);
@@ -37,7 +38,7 @@ export const corsHeaders = (origin: string | undefined, allowed: readonly string
   if (origin && allowed.includes(origin)) {
     headers["access-control-allow-origin"] = origin;
     headers["access-control-allow-credentials"] = "true";
-    headers["access-control-allow-methods"] = "GET,POST,OPTIONS";
+    headers["access-control-allow-methods"] = "GET,POST,DELETE,OPTIONS";
     headers["access-control-allow-headers"] = "Authorization,Content-Type";
     headers["access-control-max-age"] = "600";
   }

@@ -7,6 +7,7 @@ export interface ObjectStore {
   signedPutUrl(key: string, expiresSeconds: number): Promise<string>;
   signedGetUrl(key: string, expiresSeconds: number): Promise<string>;
   head(key: string): Promise<ObjectMetadata>;
+  deleteObject(key: string): Promise<void>;
 }
 
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:?\d{2})?$/;
@@ -25,9 +26,19 @@ export function reviveDates(value: unknown): unknown {
   return value;
 }
 
+/** 把 COS 源站签名 URL 的域名换成 CDN 加速域名。
+ *  签名参数（q-sign-time 等）原样保留，因此 CDN 回源时仍以源站 Host + 原签名请求，源站鉴权可正常通过。
+ *  仅用于 GET 下载 URL；PUT 上传 URL 必须走源站，否则签名与路由可能失效。
+ *  未配置 cdnBase 时原样返回，行为与改动前完全一致。 */
+export function applyCdnDomain(url: string, cdnBase?: string): string {
+  if (!cdnBase) return url;
+  const base = cdnBase.replace(/\/+$/, "");
+  return url.replace(/^https?:\/\/[^/]+\.cos\.[^/]*\.myqcloud\.com/i, base);
+}
+
 export class TencentCosStore implements ObjectStore {
   private client: COS;
-  constructor(private bucket: string, private region: string) {
+  constructor(private bucket: string, private region: string, private cdnBase?: string) {
     const { SecretId, SecretKey, SecurityToken } = loadTencentCredentials();
     if (!SecretId || !SecretKey) throw new Error("COS runtime credentials are not configured");
     this.client = new COS({ SecretId, SecretKey, SecurityToken });
@@ -39,7 +50,10 @@ export class TencentCosStore implements ObjectStore {
     }, (error, data) => error ? reject(error) : resolve(data.Url)));
   }
   signedPutUrl(key: string, expiresSeconds: number) { return this.url("PUT", key, expiresSeconds); }
-  signedGetUrl(key: string, expiresSeconds: number) { return this.url("GET", key, expiresSeconds); }
+  /** 下载 URL 走 CDN（若已配置）：整段视频的重复拉取收敛到边缘缓存，少付 COS 外网下行流量。 */
+  signedGetUrl(key: string, expiresSeconds: number) {
+    return this.url("GET", key, expiresSeconds).then((url) => applyCdnDomain(url, this.cdnBase));
+  }
   head(key: string): Promise<ObjectMetadata> {
     return new Promise((resolve, reject) => this.client.headObject({ Bucket: this.bucket, Region: this.region, Key: key }, (error, data) => {
       if (error) return reject(new ApiError(409, "UPLOAD_NOT_FOUND", "尚未发现完整上传对象"));

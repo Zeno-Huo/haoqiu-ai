@@ -163,4 +163,54 @@ export class CosRepository implements TaskRepository {
     await this.writeTask(updated);
     return updated;
   }
+
+  async deleteTask(id: string): Promise<void> {
+    await this.store.deleteObject(taskKey(id));
+  }
+  async deleteUpload(id: string): Promise<void> {
+    await this.store.deleteObject(uploadKey(id));
+  }
+  /** 找出仍引用同一段原始视频的任务。
+   *  key 形如 inputs/{ownerId}/{uploadId}/source.mp4，而 uploadId 唯一，
+   *  同一段视频最多派生出 deep(<uploadId>) 与 instant(instant_<uploadId>) 两个任务，
+   *  因此直接按 key 精确读取即可，不必全表扫描——listAllTasks 有 max 上限，
+   *  任务量一大就会漏判引用，进而误删别的任务仍在使用的视频。 */
+  async findTasksByInputKey(inputObjectKey: string): Promise<TaskRecord[]> {
+    const match = inputObjectKey.match(/^inputs\/[^/]+\/([^/]+)\//);
+    if (match) {
+      const uploadId = match[1];
+      const found: TaskRecord[] = [];
+      for (const id of [uploadId, `instant_${uploadId}`]) {
+        const task = await this.readTask(id);
+        if (task && task.input_object_key === inputObjectKey) found.push(task);
+      }
+      return found;
+    }
+    // 兜底：key 格式不符合预期时退回全表扫描（上限调大，尽量不漏）。
+    const tasks = await this.listAllTasks(5000);
+    return tasks.filter((t) => t.input_object_key === inputObjectKey);
+  }
+
+  /** 单个任务的排队超时判定：queued/retry_wait 且创建时间超过 TTL 则判失败并返回新记录，否则返回 null。
+   *  背景：queued 任务此前没有超时上限，worker 不在线时 attempt 恒为 0、永远够不到 max_attempts，
+   *  任务会永久停在队列里，前端持续轮询产生 COS 读请求费。
+   *  刻意做成"按任务判定"而非遍历全表：遍历会让每次前端轮询都扫一遍所有任务，反而放大请求费。 */
+  async expireTaskIfStale(taskId: string, now: Date, ttlSeconds: number): Promise<TaskRecord | null> {
+    const task = await this.readTask(taskId);
+    if (!task) return null;
+    // 未命中过期条件时原样返回：调用方（前端轮询）直接复用这次读取，
+    // 不必再读一遍 COS——轮询是高频操作，多一次读就是多一倍请求费。
+    if (!["queued", "retry_wait"].includes(task.status)) return task;
+    if (iso(task.created_at) > now.getTime() - ttlSeconds * 1000) return task;
+    const failed: TaskRecord = {
+      ...task,
+      status: "failed",
+      stage: "failed",
+      updated_at: now,
+      completed_at: now,
+      error: { code: "STALE_QUEUED", message: "任务排队超时，未检测到可处理的工作节点" }
+    };
+    await this.writeTask(failed);
+    return failed;
+  }
 }

@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { MATCH_KIND_LABEL, MATCH_STATUS_LABEL, matchKind, matchStatus, matchTarget } from '../lib/matchLink'
 import { deleteMatch, listMatches } from '../lib/storage'
+import { deleteCloudDetectionJob, deleteInstantAnalysisJob } from '../lib/cloudDetectionApi'
 import { formatDate, formatDuration } from '../lib/utils'
 import type { Match } from '../types'
 
@@ -33,16 +34,35 @@ export default function History() {
     })
   }
 
-  function remove(match: Match) {
-    if (!window.confirm(`删除「${match.videoName || match.name}」的往期分析记录？此操作不可撤销。`)) return
+  /** 一条记录可能挂着多个云端任务（深度复盘 / 云端检测 / 即时分析 / 个人追踪），删除时要全部清掉，
+   *  否则 COS 上的任务 JSON 与视频永不释放——以前"删了记录但存储不掉"就是漏了这一步。
+   *  云端删除失败不阻塞本地删除，避免网络或鉴权问题把用户卡死。 */
+  async function purgeCloudJobs(match: Match): Promise<void> {
+    const jobs: Array<{ id: string; remove: (id: string) => Promise<unknown> }> = []
+    for (const id of [match.detectionJobId, match.cloudJobId, match.trackingJobId]) {
+      if (id) jobs.push({ id, remove: deleteCloudDetectionJob })
+    }
+    if (match.instantJobId) jobs.push({ id: match.instantJobId, remove: deleteInstantAnalysisJob })
+    // 必须串行，不能并发：后端判断"是否还有别的任务引用同一段视频"后才回收视频，
+    // 并发时每个请求都会看到对方尚未删除，于是谁都不回收，视频反而变成孤儿。
+    for (const { id, remove } of jobs) {
+      try { await remove(id) } catch (error) { console.warn('云端任务删除失败，已忽略', id, error) }
+    }
+  }
+
+  async function remove(match: Match) {
+    if (!window.confirm(`删除「${match.videoName || match.name}」的往期分析记录？云端视频也会一并清除，此操作不可撤销。`)) return
+    await purgeCloudJobs(match)
     deleteMatch(match.id)
     setMatches((list) => list.filter((item) => item.id !== match.id))
   }
 
-  function removeSelected() {
+  async function removeSelected() {
     if (selected.size === 0) return
-    if (!window.confirm(`确认删除选中的 ${selected.size} 场往期分析记录？此操作不可撤销。`)) return
-    selected.forEach((id) => deleteMatch(id))
+    if (!window.confirm(`确认删除选中的 ${selected.size} 场往期分析记录？云端视频也会一并清除，此操作不可撤销。`)) return
+    const targets = matches.filter((match) => selected.has(match.id))
+    await Promise.all(targets.map(purgeCloudJobs))
+    targets.forEach((match) => deleteMatch(match.id))
     setMatches((list) => list.filter((item) => !selected.has(item.id)))
     exitBatch()
   }

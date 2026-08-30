@@ -26,7 +26,7 @@ const getCloudApp = (): ReturnType<typeof cloudbase.init> => {
 };
 const getService = (): TaskService => {
   if (!service) {
-    const store = new TencentCosStore(config.bucket, config.region);
+    const store = new TencentCosStore(config.bucket, config.region, config.cdnBase);
     // 该体验版环境没有文档库，改为 COS JSON 文件存储。单用户短生命周期任务用不上事务/复杂查询。
     service = new TaskService(new CosRepository(store), store, config);
   }
@@ -87,10 +87,11 @@ export const main = async (event: any, context: any) => {
         region: config.region,
       };
       try {
-        const store = new TencentCosStore(config.bucket, config.region);
+        const store = new TencentCosStore(config.bucket, config.region, config.cdnBase);
         const listProbe = async (prefix: string): Promise<Record<string, unknown>> => {
           try {
-            const keys = await store.listKeys(prefix, 5);
+            // max 之前写死为 5，会把统计截断成最多 5 条，排查孤儿数据时严重误导（真实堆积量看不出来）。
+            const keys = await store.listKeys(prefix, 1000);
             return { readable: true, count: keys.length, sample: keys.slice(0, 3) };
           } catch (e) {
             return { readable: false, error: e instanceof Error ? e.message : String(e) };
@@ -99,6 +100,9 @@ export const main = async (event: any, context: any) => {
         diag.db = { mode: "cos-json" };
         diag.db.uploads = await listProbe("db/upload/");
         diag.db.tasks = await listProbe("db/task/");
+        // 视频本体统计：孤儿视频主要堆在这两个前缀下，是存储容量的大头。
+        diag.db.inputs = await listProbe("inputs/");
+        diag.db.outputs = await listProbe("outputs/");
       } catch (e) {
         diag.db = { mode: "cos-json", initialized: false, error: e instanceof Error ? e.message : String(e) };
       }
@@ -136,9 +140,18 @@ export const main = async (event: any, context: any) => {
     if (method === "GET" && match) {
       return respond(200, publicTask(await api.taskForUser(currentUser(event, context), decodeURIComponent(match[1]))));
     }
+    // 网页端删除必须走这里：此前 History 只删 localStorage，COS 上的任务 JSON 与视频永不释放。
+    match = route.match(/^\/api\/v1\/cloud-detection-jobs\/([^/]+)$/);
+    if (method === "DELETE" && match) {
+      return respond(200, await api.deleteTaskForUser(currentUser(event, context), decodeURIComponent(match[1])));
+    }
     match = route.match(/^\/api\/v1\/detection-jobs\/([^/]+)$/);
     if (method === "GET" && match) {
       return respond(200, publicTask(await api.taskForUser(currentUser(event, context), decodeURIComponent(match[1]))));
+    }
+    match = route.match(/^\/api\/v1\/detection-jobs\/([^/]+)$/);
+    if (method === "DELETE" && match) {
+      return respond(200, await api.deleteTaskForUser(currentUser(event, context), decodeURIComponent(match[1])));
     }
     match = route.match(/^\/api\/v1\/cloud-detection-jobs\/([^/]+)\/artifacts\/annotated-video-url$/);
     if (method === "POST" && match) {
@@ -151,6 +164,10 @@ export const main = async (event: any, context: any) => {
     match = route.match(/^\/api\/v1\/instant-analysis\/([^/]+)$/);
     if (method === "GET" && match) {
       return respond(200, publicTask(await api.taskForUser(currentUser(event, context), decodeURIComponent(match[1]))));
+    }
+    match = route.match(/^\/api\/v1\/instant-analysis\/([^/]+)$/);
+    if (method === "DELETE" && match) {
+      return respond(200, await api.deleteTaskForUser(currentUser(event, context), decodeURIComponent(match[1])));
     }
     if (method === "POST" && route === "/api/v1/instant-analysis") {
       if (!body.upload_id) throw new ApiError(400, "INVALID_INPUT", "upload_id 为必填项");

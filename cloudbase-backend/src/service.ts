@@ -77,7 +77,15 @@ export class TaskService {
   }
 
   async taskForUser(ownerId: string, taskId: string): Promise<TaskRecord> {
-    const task = await this.repo.getTask(taskId);
+    // 超时判定与读取合并为一次：既省掉一次 COS 读请求（轮询是高频操作），又不需要额外定时触发器。
+    // 背景：worker 不在线时 queued 任务会永远停着（attempt 恒为 0），前端无限轮询产生 COS 读请求费。
+    let task: TaskRecord | null;
+    try {
+      task = await this.repo.expireTaskIfStale(taskId, this.now(), this.config.queuedTtlSeconds);
+    } catch {
+      // 超时判定是旁路逻辑，失败后退化为普通读取，不能阻塞正常查询。
+      task = await this.repo.getTask(taskId);
+    }
     if (!task || task.owner_id !== ownerId) throw new ApiError(404, "TASK_NOT_FOUND", "任务不存在");
     return task;
   }
@@ -172,5 +180,42 @@ export class TaskService {
     if (!error.code || !error.message) throw new ApiError(400, "INVALID_ERROR", "error.code and error.message are required");
     return this.repo.fail(String(body.task_id), String(body.lease_token), body.retryable === true,
       { code: String(error.code).slice(0, 64), message: String(error.message).slice(0, 500) }, this.now());
+  }
+
+  /** 删除任务并释放它占用的 COS 存储。
+   *  网页端删除必须走这里：此前 History 只删 localStorage 记录，云端任务 JSON 与视频永不释放，
+   *  导致每次测试上传的视频都永久堆积在桶里。
+   *  注意 deep 与 instant 任务共用同一段上传视频，因此只有确认没有其他任务仍引用该视频时才删源文件。 */
+  async deleteTaskForUser(ownerId: string, taskId: string): Promise<{ task_id: string; deleted_objects: string[]; kept_objects: string[] }> {
+    const task = await this.repo.getTask(taskId);
+    if (!task || task.owner_id !== ownerId) throw new ApiError(404, "TASK_NOT_FOUND", "任务不存在");
+
+    const deleted: string[] = [];
+    const kept: string[] = [];
+    const keys = [task.input_object_key, task.output_object_key].filter((k): k is string => Boolean(k));
+
+    // 引用检查必须在删除自身之前完成，并显式排除自身：
+    // 若依赖"先删自己再查表"的隐式顺序，一旦有人调整顺序，判断就会把自己也算作引用方，导致永远不放行删视频。
+    const siblings = (await this.repo.findTasksByInputKey(task.input_object_key)).filter((t) => t._id !== taskId);
+
+    if (siblings.length > 0) {
+      // 同一段视频还有别的任务在用（典型场景：deep 与 instant 并存），只删任务记录、保留视频文件。
+      await this.repo.deleteTask(taskId);
+      kept.push(...keys);
+      return { task_id: taskId, deleted_objects: deleted, kept_objects: kept };
+    }
+
+    // 先删视频、后删任务：删视频失败时任务记录仍在，用户可以重试删除；
+    // 反过来的话会留下"任务已删、视频成孤儿、而接口再也触发不到清理"的死角。
+    // 失败直接抛出（COS 对不存在的对象返回成功，这里失败通常是网络/权限问题，值得让用户重试）。
+    for (const key of keys) {
+      await this.objects.deleteObject(key);
+      deleted.push(key);
+    }
+    await this.repo.deleteTask(taskId);
+    // 上传记录：instant 任务 id 形如 instant_<uploadId>，deep 任务 id 即 uploadId。
+    const uploadId = task._id.startsWith("instant_") ? task._id.slice("instant_".length) : task._id;
+    try { await this.repo.deleteUpload(uploadId); } catch { /* 上传记录可能本就不存在，不影响主体结果 */ }
+    return { task_id: taskId, deleted_objects: deleted, kept_objects: kept };
   }
 }
