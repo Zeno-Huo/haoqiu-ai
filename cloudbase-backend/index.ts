@@ -1,12 +1,12 @@
 import cloudbase from "@cloudbase/node-sdk";
-import { cloudbaseContextUserId, normalizeHeaders, requireUser, userIdFromBearer } from "./src/auth";
+import { cloudbaseContextUserId, normalizeHeaders, requireUser, requireWorker, userIdFromBearer } from "./src/auth";
 import { loadConfig, loadTencentCredentials } from "./src/config";
 import { TencentCosStore } from "./src/cos";
 import { CosRepository } from "./src/cos-repository";
 import { TaskService } from "./src/service";
 import { ApiError } from "./src/types";
 import type { TaskRecord } from "./src/types";
-import { publicTask } from "./src/http-contract";
+import { haiCompletionBody, publicTask, workerTask } from "./src/http-contract";
 import { corsHeaders, requireAllowedOrigin, requireAllowedPreflight } from "./src/http-cors";
 
 // 吞掉未处理的 Promise rejection，避免云函数进程崩溃（历史遗留：旧 SDK 的 createCollection
@@ -26,7 +26,7 @@ const getCloudApp = (): ReturnType<typeof cloudbase.init> => {
 };
 const getService = (): TaskService => {
   if (!service) {
-    const store = new TencentCosStore(config.bucket, config.region, config.cdnBase);
+    const store = new TencentCosStore(config.bucket, config.region);
     // 该体验版环境没有文档库，改为 COS JSON 文件存储。单用户短生命周期任务用不上事务/复杂查询。
     service = new TaskService(new CosRepository(store), store, config);
   }
@@ -87,11 +87,10 @@ export const main = async (event: any, context: any) => {
         region: config.region,
       };
       try {
-        const store = new TencentCosStore(config.bucket, config.region, config.cdnBase);
+        const store = new TencentCosStore(config.bucket, config.region);
         const listProbe = async (prefix: string): Promise<Record<string, unknown>> => {
           try {
-            // max 之前写死为 5，会把统计截断成最多 5 条，排查孤儿数据时严重误导（真实堆积量看不出来）。
-            const keys = await store.listKeys(prefix, 1000);
+            const keys = await store.listKeys(prefix, 5);
             return { readable: true, count: keys.length, sample: keys.slice(0, 3) };
           } catch (e) {
             return { readable: false, error: e instanceof Error ? e.message : String(e) };
@@ -100,9 +99,6 @@ export const main = async (event: any, context: any) => {
         diag.db = { mode: "cos-json" };
         diag.db.uploads = await listProbe("db/upload/");
         diag.db.tasks = await listProbe("db/task/");
-        // 视频本体统计：孤儿视频主要堆在这两个前缀下，是存储容量的大头。
-        diag.db.inputs = await listProbe("inputs/");
-        diag.db.outputs = await listProbe("outputs/");
       } catch (e) {
         diag.db = { mode: "cos-json", initialized: false, error: e instanceof Error ? e.message : String(e) };
       }
@@ -115,35 +111,44 @@ export const main = async (event: any, context: any) => {
       diag.lastUnhandled = lastUnhandled;
       return respond(200, diag);
     }
+    if (route.startsWith("/worker/") || route.startsWith("/v1/worker/")) {
+      requireWorker(event, config.workerToken, config.envId);
+    }
     const api = getService();
 
     if (method === "POST" && ["/api/v1/cos-upload-tickets", "/api/v1/uploads/ticket"].includes(route)) {
       return respond(201, await api.issueUpload(currentUser(event, context), body));
     }
-    let match = route.match(/^\/api\/v1\/cloud-detection-jobs\/([^/]+)$/);
-    if (method === "GET" && match) {
-      return respond(200, publicTask(await api.taskForUser(currentUser(event, context), decodeURIComponent(match[1]))));
+    if (method === "POST" && route === "/api/v1/cloud-detection-jobs") {
+      if (!body.upload_id || !body.client_match_id) throw new ApiError(400, "INVALID_INPUT", "upload_id 和 client_match_id 为必填项");
+      const mode = body.mode === "single" ? "single" : "deep";
+      return respond(202, publicTask(await api.confirmUpload(
+        currentUser(event, context), String(body.upload_id), String(body.client_match_id), mode
+      )));
     }
-    // 网页端删除必须走这里：此前 History 只删 localStorage，COS 上的任务 JSON 与视频永不释放。
+    let match = route.match(/^\/api\/v1\/uploads\/([^/]+)\/confirm$/);
+    if (method === "POST" && match) {
+      return respond(202, publicTask(await api.confirmUpload(currentUser(event, context), decodeURIComponent(match[1]))));
+    }
     match = route.match(/^\/api\/v1\/cloud-detection-jobs\/([^/]+)$/);
-    if (method === "DELETE" && match) {
-      return respond(200, await api.deleteTaskForUser(currentUser(event, context), decodeURIComponent(match[1])));
+    if (method === "GET" && match) {
+      return respond(200, publicTask(await api.taskForUser(currentUser(event, context), decodeURIComponent(match[1]))));
     }
     match = route.match(/^\/api\/v1\/detection-jobs\/([^/]+)$/);
     if (method === "GET" && match) {
       return respond(200, publicTask(await api.taskForUser(currentUser(event, context), decodeURIComponent(match[1]))));
     }
-    match = route.match(/^\/api\/v1\/detection-jobs\/([^/]+)$/);
-    if (method === "DELETE" && match) {
-      return respond(200, await api.deleteTaskForUser(currentUser(event, context), decodeURIComponent(match[1])));
+    match = route.match(/^\/api\/v1\/cloud-detection-jobs\/([^/]+)\/artifacts\/annotated-video-url$/);
+    if (method === "POST" && match) {
+      return respond(200, await api.resultUrl(currentUser(event, context), decodeURIComponent(match[1])));
+    }
+    match = route.match(/^\/api\/v1\/detection-jobs\/([^/]+)\/artifacts\/annotated-video$/);
+    if (method === "GET" && match) {
+      return respond(200, await api.resultUrl(currentUser(event, context), decodeURIComponent(match[1])));
     }
     match = route.match(/^\/api\/v1\/instant-analysis\/([^/]+)$/);
     if (method === "GET" && match) {
       return respond(200, publicTask(await api.taskForUser(currentUser(event, context), decodeURIComponent(match[1]))));
-    }
-    match = route.match(/^\/api\/v1\/instant-analysis\/([^/]+)$/);
-    if (method === "DELETE" && match) {
-      return respond(200, await api.deleteTaskForUser(currentUser(event, context), decodeURIComponent(match[1])));
     }
     if (method === "POST" && route === "/api/v1/instant-analysis") {
       if (!body.upload_id) throw new ApiError(400, "INVALID_INPUT", "upload_id 为必填项");
@@ -154,18 +159,48 @@ export const main = async (event: any, context: any) => {
         jersey_hint: typeof rawContext.jersey_hint === "string" ? rawContext.jersey_hint.slice(0, 160) : undefined,
         opening_frame_point: point && Number.isFinite(point.x) && Number.isFinite(point.y) && point.x >= 0 && point.x <= 1 && point.y >= 0 && point.y <= 1 ? { x: point.x, y: point.y } : undefined
       } : undefined;
-      const task = await api.createInstantJob(
+      const { task, created } = await api.createInstantJob(
         currentUser(event, context),
         String(body.upload_id),
         body.client_match_id ? String(body.client_match_id) : undefined,
         analysisContext
       );
-      getCloudApp()
-        .callFunction({ name: "haoqiu-vlm", data: { taskId: task._id, envId: config.envId } })
-        .catch((err) => console.error("haoqiu-vlm trigger failed", err instanceof Error ? err.message : err));
+      if (created) {
+        getCloudApp()
+          .callFunction({ name: "haoqiu-vlm", data: { taskId: task._id, envId: config.envId } })
+          .catch((err) => console.error("haoqiu-vlm trigger failed", err instanceof Error ? err.message : err));
+      }
       return respond(202, publicTask(task));
     }
 
+    if (method === "POST" && route === "/worker/v1/tasks/claim") {
+      const task = await api.claim(body);
+      return task ? respond(200, workerTask(task)) : respond(204, null);
+    }
+    if (method === "POST" && route === "/worker/v1/tasks/renew") return respond(200, workerTask(await api.renew(body)));
+    if (method === "POST" && route === "/worker/v1/tasks/progress") return respond(200, workerTask(await api.progress(body)));
+    if (method === "POST" && route === "/worker/v1/tasks/complete") return respond(200, workerTask(await api.complete(body)));
+    if (method === "POST" && route === "/worker/v1/tasks/fail") return respond(200, workerTask(await api.fail(body)));
+
+    // Canonical private contract consumed by hai-service/pull_worker/cloud_adapters.py.
+    if (method === "POST" && route === "/v1/worker/tasks/claim") {
+      const task = await api.claim(body);
+      return task ? respond(200, { task: workerTask(task) }) : respond(204, null);
+    }
+    match = route.match(/^\/v1\/worker\/tasks\/([^/]+)\/(renew|progress|complete|fail)$/);
+    if (method === "POST" && match) {
+      const taskId = decodeURIComponent(match[1]);
+      const action = match[2];
+      let task: TaskRecord;
+      if (action === "renew") task = await api.renew({ ...body, task_id: taskId });
+      else if (action === "progress") task = await api.progress({ ...body, task_id: taskId });
+      else if (action === "fail") task = await api.fail({ ...body, task_id: taskId });
+      else {
+        const idempotencyKey = normalizeHeaders(event?.headers)["idempotency-key"];
+        task = await api.complete(haiCompletionBody(taskId, body, idempotencyKey));
+      }
+      return respond(200, { accepted: true, task: workerTask(task) });
+    }
     throw new ApiError(404, "NOT_FOUND", "接口不存在");
   } catch (error) {
     const origin = normalizeHeaders(event?.headers).origin || undefined;
