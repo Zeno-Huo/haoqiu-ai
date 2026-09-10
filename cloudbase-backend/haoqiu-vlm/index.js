@@ -166,13 +166,113 @@ async function callQwenWithVideo(videoUrl, promptText) {
 }
 
 // ============================================================
+// Gemini VLM 调用（经 Cloudflare Worker 中转）
+// ============================================================
+// 为什么走中转：Google Cloud 全球负载均衡对大陆 IP 段主动发 RST，TCP 握手前就被拒，
+// 云函数直连 generativelanguage.googleapis.com 必失败。Worker 跑在境外节点代为转发。
+// 视频走 Files API：先上传拿到 file_uri，再在 generateContent 里引用，多轮复用同一份，
+// 避免 6 轮重复传视频。
+
+const geminiProxyUrl = (process.env.GEMINI_PROXY_URL || "").trim().replace(/\/+$/, "");
+const geminiProxyToken = process.env.GEMINI_PROXY_TOKEN || "";
+// Workers 免费版请求体上限 100MB，留足余量；同时函数内存 1024MB，读进内存也安全。
+const geminiMaxUploadBytes = Number(process.env.GEMINI_MAX_UPLOAD_BYTES) || 90 * 1024 * 1024;
+
+function requireGeminiProxy() {
+  if (!geminiProxyUrl) throw new Error("未配置 GEMINI_PROXY_URL（Cloudflare Worker 地址）");
+  if (!geminiProxyToken) throw new Error("未配置 GEMINI_PROXY_TOKEN");
+}
+
+async function geminiGetFile(name) {
+  const resp = await fetch(`${geminiProxyUrl}/v1beta/${name}`, {
+    headers: { "x-proxy-token": geminiProxyToken },
+  });
+  return resp.json().catch(() => null);
+}
+
+/** 把视频上传到 Gemini Files API，返回 { uri, name, mimeType, bytes } */
+async function geminiUploadVideo(signedUrl, taskId) {
+  requireGeminiProxy();
+  const resp = await fetch(signedUrl);
+  if (!resp.ok) throw new Error(`下载视频失败: HTTP ${resp.status}`);
+  const buf = Buffer.from(await resp.arrayBuffer());
+  const bytes = buf.length;
+  if (bytes > geminiMaxUploadBytes) {
+    throw new Error(`视频 ${(bytes / 1048576).toFixed(0)}MB 超过上传上限 ${(geminiMaxUploadBytes / 1048576).toFixed(0)}MB`);
+  }
+  const mimeType = "video/mp4";
+  const name = `haoqiu-${taskId}-${Date.now()}`;
+
+  const upResp = await fetch(
+    `${geminiProxyUrl}/files/upload?name=${encodeURIComponent(name)}&mime=${encodeURIComponent(mimeType)}`,
+    {
+      method: "POST",
+      headers: {
+        "content-type": mimeType,
+        "x-proxy-token": geminiProxyToken,
+        "x-video-size": String(bytes),
+      },
+      body: buf,
+    }
+  );
+  const upJson = await upResp.json().catch(() => null);
+  if (!upResp.ok) throw new Error(`Gemini 上传失败: ${upJson?.error || upResp.status} ${JSON.stringify(upJson).slice(0, 300)}`);
+  const file = upJson?.file;
+  if (!file?.uri) throw new Error("Gemini 上传返回缺少 file.uri: " + JSON.stringify(upJson).slice(0, 300));
+
+  // 上传完是 PROCESSING，要等 Google 转码成 ACTIVE 才能引用
+  const deadline = Date.now() + 180000;
+  let state = file.state;
+  while (state === "PROCESSING" && Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 3000));
+    const st = await geminiGetFile(file.name);
+    state = st?.state;
+    if (state === "FAILED") throw new Error("Gemini 处理视频失败 (FAILED)");
+  }
+  if (state && state !== "ACTIVE") throw new Error(`Gemini 视频状态异常: ${state}`);
+  console.log(`[vlm][gemini] 上传完成 ${(bytes / 1048576).toFixed(1)}MB -> ${file.name} (${state})`);
+  return { uri: file.uri, name: file.name, mimeType: file.mimeType || mimeType, bytes };
+}
+
+async function callGeminiWithVideo(fileUri, mimeType, promptText) {
+  requireGeminiProxy();
+  const body = {
+    contents: [
+      {
+        role: "user",
+        parts: [
+          { file_data: { mime_type: mimeType, file_uri: fileUri } },
+          { text: promptText },
+        ],
+      },
+    ],
+    generationConfig: { temperature: 0.2, maxOutputTokens: 8192 },
+  };
+  const resp = await fetch(
+    `${geminiProxyUrl}/v1beta/models/${encodeURIComponent(vlmModel)}:generateContent`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-proxy-token": geminiProxyToken },
+      body: JSON.stringify(body),
+    }
+  );
+  const json = await resp.json().catch(() => null);
+  if (!resp.ok) throw new Error(`Gemini API 错误: ${json?.error?.message || resp.status} ${JSON.stringify(json).slice(0, 300)}`);
+  const parts = json?.candidates?.[0]?.content?.parts || [];
+  const text = parts.map((p) => p?.text || "").join("");
+  if (!text) throw new Error("Gemini 未返回内容: " + JSON.stringify(json).slice(0, 500));
+  return text;
+}
+
+// ============================================================
 // 视频预处理：自动压制到千问可接受范围
 // ============================================================
 // 千问 qwen-vl-max 硬限制：≤150MB、≤10 分钟，单帧被缩放到 ~1024×640。
 // 手机原片常达 500MB~1GB（4K），直接传会失败，所以在这里自动压制。
 // 关键技巧：ffmpeg 直接从 COS 签名 URL 流式读取，原片不落盘，磁盘只占输出大小。
 
-const VLM_MAX_BYTES = 120 * 1024 * 1024; // 目标输出大小（千问硬限 150MB，留余量也省它处理时间）
+// 千问硬限 150MB 留余量；Gemini 走 Worker 上传，Workers 免费版请求体上限 100MB，压得更小。
+const VLM_MAX_BYTES = vlmProvider === "gemini" ? 90 * 1024 * 1024 : 120 * 1024 * 1024;
 const VLM_MAX_SECONDS = 300; // 目标 5 分钟：既是产品建议时长，也让 5 轮 VLM + 压缩能塞进 900s 超时
 const AUDIO_KBPS = 96;
 
@@ -205,6 +305,45 @@ async function runSelfTest() {
   } catch (e) {
     out.encodeTest = { ok: false, error: String(e.message).slice(0, 300), ms: Date.now() - started };
   }
+
+  // --- Gemini 链路探测：SCF -> Cloudflare Worker -> Google ---
+  out.provider = vlmProvider;
+  if (vlmProvider === "gemini") {
+    out.geminiProxyUrl = geminiProxyUrl || null;
+    try {
+      const t0 = Date.now();
+      const r = await fetch(`${geminiProxyUrl}/health`, { headers: { "x-proxy-token": geminiProxyToken } });
+      const j = await r.json().catch(() => null);
+      out.proxyHealth = { status: r.status, hasKey: j?.hasKey, ms: Date.now() - t0 };
+    } catch (e) {
+      const c = e?.cause || {};
+      out.proxyHealth = {
+        error: String((e && e.message) || e),
+        code: c.code || e?.code || null,
+        errno: c.errno || null,
+        syscall: c.syscall || null,
+        hostname: c.hostname || null,
+      };
+    }
+    // 对照：同一次调用里访问已知可达的境外地址，判断是全局断网还是 workers.dev 单点被拦
+    try {
+      const t1 = Date.now();
+      const r2 = await fetch("https://dashscope.aliyuncs.com/", { method: "GET" });
+      out.controlDashscope = { status: r2.status, ms: Date.now() - t1 };
+    } catch (e) {
+      out.controlDashscope = { error: String((e && e.message) || e), code: (e?.cause || {}).code || null };
+    }
+    try {
+      const r = await fetch(`${geminiProxyUrl}/v1beta/models`, { headers: { "x-proxy-token": geminiProxyToken } });
+      const j = await r.json().catch(() => null);
+      out.geminiKey = j?.models
+        ? { ok: true, modelCount: j.models.length }
+        : { ok: false, status: r.status, detail: String(j?.error?.message || JSON.stringify(j)).slice(0, 300) };
+    } catch (e) {
+      out.geminiKey = { ok: false, error: String((e && e.message) || e) };
+    }
+  }
+
   return out;
 }
 
@@ -838,13 +977,25 @@ exports.main = async (event) => {
         ["technique", "动作矫正", buildTechniquePrompt(durationSec, ctx)],
       ];
 
+      // 按 provider 准备统一的「带视频提问」入口：
+      // - 千问：整视频 URL 直传，每轮把 URL 再交给模型
+      // - Gemini：先把视频传到 Files API 拿到 file_uri，之后 6 轮复用同一份，不重复传
+      let askVideo;
+      if (vlmProvider === "gemini") {
+        await updateTask(taskId, { stage: "uploading", progress: 5, round_info: "上传视频到 Gemini" });
+        const uploaded = await geminiUploadVideo(videoUrl, taskId);
+        askVideo = (prompt) => callGeminiWithVideo(uploaded.uri, uploaded.mimeType, prompt);
+      } else {
+        askVideo = (prompt) => callQwenWithVideo(videoUrl, prompt);
+      }
+
       for (let i = 0; i < roundDefs.length; i++) {
         const [key, label, prompt] = roundDefs[i];
         const progress = 5 + Math.floor((i / roundDefs.length) * 80); // 5% -> 85%
         try {
           await updateTask(taskId, { stage: `round_${i + 1}_${key}`, progress, round_info: `${label} (${i + 1}/${roundDefs.length})` });
           console.log(`[vlm] 第${i + 1}轮 ${label} 开始`);
-          const raw = await callQwenWithVideo(videoUrl, prompt);
+          const raw = await askVideo(prompt);
           const parsed = extractJsonFromText(raw);
           rounds[key] = { label, raw, parsed, success: !!parsed, error: parsed ? null : "JSON解析失败" };
           console.log(`[vlm] 第${i + 1}轮 ${label} 完成, ${raw.length} 字符, 解析${parsed ? "成功" : "失败"}`);
