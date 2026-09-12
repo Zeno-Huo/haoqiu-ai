@@ -475,6 +475,9 @@ body { overflow-x: hidden; }
 .instant-moment-kind.is-dispossessed,.instant-moment-kind.is-turnover { background: rgba(255,138,138,.12); color: var(--attack); }
 .instant-moment-kind.is-dribble { background: rgba(255,196,90,.14); color: #d99a2b; }
 .instant-moments span { color: var(--text-secondary); font-size: 12px; line-height: 1.5; }
+/* 业余场景软判断标注：号码/事件是模型推测，让用户一眼看出 */
+.instant-moment-uncertain { justify-self: end; border: 1px dashed var(--text-muted); border-radius: 99px; padding: 2px 8px; color: var(--text-muted); font-size: 10px; font-style: normal; }
+.instant-player-uncertain { display: inline-block; margin: 3px 0 0; padding: 1px 7px; border: 1px dashed var(--text-muted); border-radius: 99px; color: var(--text-muted); font-size: 10px; font-style: normal; }
 .instant-empty { margin: 12px 0 0; color: var(--text-muted); font-size: 13px; }
 .instant-recommendation { border: 1px solid rgba(101,214,176,.35); border-radius: 12px; padding: 16px; background: rgba(101,214,176,.05); }
 .instant-recommendation > span { color: var(--ai); font-size: 12px; }

@@ -51,6 +51,18 @@ const vlmVideoTotalPixels = Number(process.env.VLM_VIDEO_TOTAL_PIXELS) || 671088
 const TASK_PREFIX = "db/rc_task/";
 const taskKey = (id) => `${TASK_PREFIX}${id}.json`;
 
+/**
+ * 宽容布尔解析。模型经常把 true 写成字符串 "true"/"是"/"yes"，
+ * 用 === true 严格判断会静默丢掉所有软标记（前端标签就永远不出现）。
+ */
+function asBool(v) {
+  if (v === true || v === 1) return true;
+  if (typeof v === "string") {
+    return ["true", "1", "yes", "y", "是", "疑似", "maybe"].includes(v.trim().toLowerCase());
+  }
+  return false;
+}
+
 // ============================================================
 // COS 工具函数
 // ============================================================
@@ -176,62 +188,123 @@ async function callQwenWithVideo(videoUrl, promptText) {
 const geminiProxyUrl = (process.env.GEMINI_PROXY_URL || "").trim().replace(/\/+$/, "");
 const geminiProxyToken = process.env.GEMINI_PROXY_TOKEN || "";
 // Workers 免费版请求体上限 100MB，留足余量；同时函数内存 1024MB，读进内存也安全。
-const geminiMaxUploadBytes = Number(process.env.GEMINI_MAX_UPLOAD_BYTES) || 90 * 1024 * 1024;
+const geminiMaxUploadBytes = Number(process.env.GEMINI_MAX_UPLOAD_BYTES) || 100 * 1024 * 1024;
 
 function requireGeminiProxy() {
   if (!geminiProxyUrl) throw new Error("未配置 GEMINI_PROXY_URL（Cloudflare Worker 地址）");
   if (!geminiProxyToken) throw new Error("未配置 GEMINI_PROXY_TOKEN");
 }
 
+// Google 返回的 name 形如 "files/xxx"，这里统一成 "files/xxx" 的安全路径
+function geminiFilePath(name) {
+  return `files/${encodeURIComponent(String(name || "").replace(/^files\//, ""))}`;
+}
+
+/** 读取 Gemini Files API 上某个文件的元数据 */
 async function geminiGetFile(name) {
-  const resp = await fetch(`${geminiProxyUrl}/v1beta/${name}`, {
+  const resp = await fetch(`${geminiProxyUrl}/v1beta/${geminiFilePath(name)}`, {
     headers: { "x-proxy-token": geminiProxyToken },
   });
   return resp.json().catch(() => null);
 }
 
-/** 把视频上传到 Gemini Files API，返回 { uri, name, mimeType, bytes } */
-async function geminiUploadVideo(signedUrl, taskId) {
+/** 删除 Gemini 上的文件（上传后转码失败的文件重传前先清掉） */
+async function geminiDeleteFile(name) {
+  try {
+    await fetch(`${geminiProxyUrl}/v1beta/${geminiFilePath(name)}`, {
+      method: "DELETE",
+      headers: { "x-proxy-token": geminiProxyToken },
+    });
+  } catch (e) {
+    console.warn("[vlm][gemini] 删除失败文件出错(可忽略):", e?.message);
+  }
+}
+
+/**
+ * 把视频上传到 Gemini Files API，返回 { uri, name, mimeType, bytes }
+ *
+ * 实测（2026-09-11）：完全相同的字节（Google 端 sha256 一致）上传两次，
+ * 一次 ACTIVE 一次 FAILED(code 13 "The file failed to be processed")，
+ * 说明 Google 的视频转码是**随机失败**，不是上传损坏、也不是编码问题。
+ * 后续对照实验进一步证明：干净 720p 片同样随机 FAILED（同一文件 3 次 = FAILED/ACTIVE/ACTIVE），
+ * 即 FAILED 与画质/分辨率无关，纯 Google 侧随机。所以不靠压缩规避，只靠重试退避扛。
+ *   —— 压缩只会把画质弄坏、让分析变胡扯，Gemini 转码阈值已贴着中转上限 100MB（见 VLM_TRANSCODE_BYTES）。
+ * 这里失败自动重试（默认 6 次，指数退避），把随机失败率压到千分级。
+ */
+const geminiUploadRetries = Number(process.env.GEMINI_UPLOAD_RETRIES) || 6;
+
+async function geminiUploadVideo(signedUrl, taskId, localPath) {
   requireGeminiProxy();
-  const resp = await fetch(signedUrl);
-  if (!resp.ok) throw new Error(`下载视频失败: HTTP ${resp.status}`);
-  const buf = Buffer.from(await resp.arrayBuffer());
+  let buf;
+  if (localPath && fs.existsSync(localPath)) {
+    // 命中本地压缩件：直接读磁盘，省一次 COS 外网下行
+    buf = await fs.promises.readFile(localPath);
+    console.log(`[vlm][gemini] 复用本地压缩件 ${(buf.length / 1048576).toFixed(1)}MB，跳过 COS 下载`);
+  } else {
+    const resp = await fetch(signedUrl);
+    if (!resp.ok) throw new Error(`下载视频失败: HTTP ${resp.status}`);
+    buf = Buffer.from(await resp.arrayBuffer());
+  }
   const bytes = buf.length;
   if (bytes > geminiMaxUploadBytes) {
     throw new Error(`视频 ${(bytes / 1048576).toFixed(0)}MB 超过上传上限 ${(geminiMaxUploadBytes / 1048576).toFixed(0)}MB`);
   }
   const mimeType = "video/mp4";
-  const name = `haoqiu-${taskId}-${Date.now()}`;
 
-  const upResp = await fetch(
-    `${geminiProxyUrl}/files/upload?name=${encodeURIComponent(name)}&mime=${encodeURIComponent(mimeType)}`,
-    {
-      method: "POST",
-      headers: {
-        "content-type": mimeType,
-        "x-proxy-token": geminiProxyToken,
-        "x-video-size": String(bytes),
-      },
-      body: buf,
+  let lastDetail = "";
+  for (let attempt = 1; attempt <= geminiUploadRetries; attempt++) {
+    const name = `haoqiu-${taskId}-${Date.now()}-${attempt}`;
+    const upResp = await fetch(
+      `${geminiProxyUrl}/files/upload?name=${encodeURIComponent(name)}&mime=${encodeURIComponent(mimeType)}`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": mimeType,
+          "x-proxy-token": geminiProxyToken,
+          "x-video-size": String(bytes),
+        },
+        body: buf,
+      }
+    );
+    const upJson = await upResp.json().catch(() => null);
+    if (!upResp.ok) {
+      lastDetail = `HTTP ${upResp.status} ${JSON.stringify(upJson).slice(0, 200)}`;
+      console.warn(`[vlm][gemini] 第${attempt}次上传接口报错: ${lastDetail}`);
+      continue;
     }
-  );
-  const upJson = await upResp.json().catch(() => null);
-  if (!upResp.ok) throw new Error(`Gemini 上传失败: ${upJson?.error || upResp.status} ${JSON.stringify(upJson).slice(0, 300)}`);
-  const file = upJson?.file;
-  if (!file?.uri) throw new Error("Gemini 上传返回缺少 file.uri: " + JSON.stringify(upJson).slice(0, 300));
+    const file = upJson?.file;
+    if (!file?.uri) {
+      lastDetail = "响应缺少 file.uri: " + JSON.stringify(upJson).slice(0, 200);
+      console.warn(`[vlm][gemini] 第${attempt}次上传返回异常: ${lastDetail}`);
+      continue;
+    }
 
-  // 上传完是 PROCESSING，要等 Google 转码成 ACTIVE 才能引用
-  const deadline = Date.now() + 180000;
-  let state = file.state;
-  while (state === "PROCESSING" && Date.now() < deadline) {
-    await new Promise((r) => setTimeout(r, 3000));
-    const st = await geminiGetFile(file.name);
-    state = st?.state;
-    if (state === "FAILED") throw new Error("Gemini 处理视频失败 (FAILED)");
+    // 上传完是 PROCESSING，要等 Google 转码成 ACTIVE 才能引用
+    const deadline = Date.now() + 180000;
+    let state = file.state;
+    let meta = null;
+    while (state === "PROCESSING" && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 3000));
+      meta = await geminiGetFile(file.name);
+      state = meta?.state;
+      if (state === "FAILED") {
+        lastDetail = JSON.stringify(meta?.error || {}).slice(0, 200);
+        break;
+      }
+    }
+    if (state === "ACTIVE") {
+      console.log(`[vlm][gemini] 上传完成(第${attempt}次) ${(bytes / 1048576).toFixed(1)}MB -> ${file.name} 时长 ${meta?.videoMetadata?.videoDuration || "?"}`);
+      return { uri: file.uri, name: file.name, mimeType: file.mimeType || mimeType, bytes };
+    }
+    console.warn(`[vlm][gemini] 第${attempt}/${geminiUploadRetries} 次处理失败 state=${state} detail=${lastDetail}`);
+    await geminiDeleteFile(file.name);
+    if (attempt < geminiUploadRetries) {
+      // 指数退避：Google 的转码是随机/间歇性失败，多等几秒能跳出它的坏窗口
+      const backoff = Math.min(30000, 2000 * Math.pow(2, attempt - 1));
+      await new Promise((r) => setTimeout(r, backoff));
+    }
   }
-  if (state && state !== "ACTIVE") throw new Error(`Gemini 视频状态异常: ${state}`);
-  console.log(`[vlm][gemini] 上传完成 ${(bytes / 1048576).toFixed(1)}MB -> ${file.name} (${state})`);
-  return { uri: file.uri, name: file.name, mimeType: file.mimeType || mimeType, bytes };
+  throw new Error(`Gemini 处理视频失败（已重试 ${geminiUploadRetries} 次）: ${lastDetail || "未知原因"}`);
 }
 
 async function callGeminiWithVideo(fileUri, mimeType, promptText) {
@@ -271,8 +344,15 @@ async function callGeminiWithVideo(fileUri, mimeType, promptText) {
 // 手机原片常达 500MB~1GB（4K），直接传会失败，所以在这里自动压制。
 // 关键技巧：ffmpeg 直接从 COS 签名 URL 流式读取，原片不落盘，磁盘只占输出大小。
 
-// 千问硬限 150MB 留余量；Gemini 走 Worker 上传，Workers 免费版请求体上限 100MB，压得更小。
-const VLM_MAX_BYTES = vlmProvider === "gemini" ? 90 * 1024 * 1024 : 120 * 1024 * 1024;
+// 千问硬限 150MB 留余量；Gemini 走 Pages 中继上传，Cloudflare 免费版请求体上限 100MB。
+const VLM_MAX_BYTES = vlmProvider === "gemini" ? 100 * 1024 * 1024 : 120 * 1024 * 1024;
+// 触发转码的体积阈值 = 中转上传上限（Gemini 100MB / 千问 120MB），超过才压缩。
+// 此前误以为「4K 原片直接传更易触发 Google 随机 FAILED」，对照实验证明 FAILED 与画质无关，
+// 压小反而弄坏画质、分析变胡扯。所以阈值贴着上限，能直传就直传、保留原画质。
+const VLM_TRANSCODE_BYTES = vlmProvider === "gemini" ? geminiMaxUploadBytes : 120 * 1024 * 1024;
+// 压缩后的目标体积：Gemini 留 10MB 余量（90MB），确保压完一定低于 100MB 中转上限。
+const VLM_TRANSCODE_TARGET_BYTES = vlmProvider === "gemini" ? 90 * 1024 * 1024 : VLM_TRANSCODE_BYTES;
+const VLM_TRANSCODE_MAX_KBPS = vlmProvider === "gemini" ? 8000 : 15000;
 const VLM_MAX_SECONDS = 300; // 目标 5 分钟：既是产品建议时长，也让 5 轮 VLM + 压缩能塞进 900s 超时
 const AUDIO_KBPS = 96;
 
@@ -304,6 +384,23 @@ async function runSelfTest() {
     fs.unlinkSync(tmp);
   } catch (e) {
     out.encodeTest = { ok: false, error: String(e.message).slice(0, 300), ms: Date.now() - started };
+  }
+
+  // 静音音轨自检：云端这个 ffmpeg 是 2018 年老版本，必须确认它支持 lavfi/anullsrc，
+  // 否则转码会失败并降级成原片直传（原片直传又容易触发 Google 随机 FAILED）。
+  try {
+    const tmp2 = path.join(os.tmpdir(), `selftest_audio_${Date.now()}.mp4`);
+    const t2 = Date.now();
+    await execFileAsync(ffmpegPath, [
+      "-y", "-f", "lavfi", "-i", "testsrc=duration=2:size=320x240:rate=15",
+      "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100",
+      "-map", "0:v:0", "-map", "1:a:0", "-shortest",
+      "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", tmp2,
+    ], { timeout: 120000 });
+    out.silentAudioTest = { ok: true, bytes: fs.statSync(tmp2).size, ms: Date.now() - t2 };
+    fs.unlinkSync(tmp2);
+  } catch (e) {
+    out.silentAudioTest = { ok: false, error: String(e.message).slice(0, 200) };
   }
 
   // --- Gemini 链路探测：SCF -> Cloudflare Worker -> Google ---
@@ -361,7 +458,7 @@ async function ensureVlmPlayable({ signedUrl, sizeBytes, durationSec, taskId, on
   const rawSeconds = Number(durationSec) || 0;
   const seconds = Math.min(rawSeconds || VLM_MAX_SECONDS, VLM_MAX_SECONDS);
   const tooLong = rawSeconds > VLM_MAX_SECONDS;
-  const tooBig = sizeBytes > VLM_MAX_BYTES;
+  const tooBig = sizeBytes > VLM_TRANSCODE_BYTES;
   const base = { url: signedUrl, compressed: false, seconds, reason: "原片已在限制内，未压缩" };
   if (!tooBig && !tooLong) return base;
   const ffmpegPath = resolveFfmpeg();
@@ -370,39 +467,86 @@ async function ensureVlmPlayable({ signedUrl, sizeBytes, durationSec, taskId, on
   let outPath;
   try {
     if (onStage) await onStage("compressing", tooLong ? "视频超过 5 分钟，正在截取并压缩前 5 分钟" : "视频过大，正在压缩到可分析大小");
-    console.log(`[vlm] 开始压缩: ${(sizeBytes / 1048576).toFixed(1)}MB / ${Math.round(rawSeconds)}s -> 目标 ${(VLM_MAX_BYTES / 1048576).toFixed(0)}MB / ${seconds}s`);
+    console.log(`[vlm] 开始压缩: ${(sizeBytes / 1048576).toFixed(1)}MB / ${Math.round(rawSeconds)}s -> 目标 ${(VLM_TRANSCODE_TARGET_BYTES / 1048576).toFixed(0)}MB / ${seconds}s`);
     outPath = path.join(os.tmpdir(), `vlm_${taskId}.mp4`);
-    let videoKbps = Math.floor((VLM_MAX_BYTES * 8) / Math.max(1, seconds) / 1000) - AUDIO_KBPS;
-    videoKbps = Math.max(500, Math.min(videoKbps, 15000));
+    let videoKbps = Math.floor((VLM_TRANSCODE_TARGET_BYTES * 8) / Math.max(1, seconds) / 1000) - AUDIO_KBPS;
+    videoKbps = Math.max(500, Math.min(videoKbps, VLM_TRANSCODE_MAX_KBPS));
     const args = [
       "-y", "-i", signedUrl,
+      // 无声源视频会导致 Gemini 转码失败（实测 code 13），所以恒定挂一条静音 AAC 音轨兜底
+      "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100",
       "-t", String(seconds),
-      "-vf", "scale=w='min(1280,iw)':h=-2",
+      "-map", "0:v:0", "-map", "1:a:0",
+      "-vf", "scale=w='min(1280,iw)':h=-2,fps=30",
       // ultrafast：云函数约 1 核 CPU，实测 ~1.2x 实时。码率给足（3Mbps+）可抵消 preset 的质量损失。
-      "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
+      "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-profile:v", "main",
+      "-b:v", `${videoKbps}k`, "-maxrate", `${Math.round(videoKbps * 1.3)}k`, "-bufsize", `${videoKbps * 2}k`,
+      "-c:a", "aac", "-b:a", `${AUDIO_KBPS}k`, "-ac", "2",
+      "-movflags", "+faststart",
+      // anullsrc 是无限长音源，不加 -shortest 会把 39 秒的视频补齐到 -t 的时长
+      "-shortest",
+      outPath,
+    ];
+    // 兜底方案 2：老版本 ffmpeg 可能没有 lavfi/anullsrc，退回不带静音轨的常规转码
+    const plainArgs = [
+      "-y", "-i", signedUrl,
+      "-t", String(seconds),
+      "-vf", "scale=w='min(1280,iw)':h=-2,fps=30",
+      "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-profile:v", "main",
       "-b:v", `${videoKbps}k`, "-maxrate", `${Math.round(videoKbps * 1.3)}k`, "-bufsize", `${videoKbps * 2}k`,
       "-c:a", "aac", "-b:a", `${AUDIO_KBPS}k`, "-ac", "2",
       "-movflags", "+faststart",
       outPath,
     ];
+    // 兜底方案 3：极简档——480p / 24fps / 1Mbps，用 -r 代替 fps 滤镜、scale 用最简单表达式，
+    // 尽可能绕开老 ffmpeg 对某些 4K/HEVC/HDR 源解码或滤镜的兼容问题
+    const minimalArgs = [
+      "-y", "-i", signedUrl,
+      "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100",
+      "-t", String(seconds),
+      "-map", "0:v:0", "-map", "1:a:0",
+      "-vf", "scale=-2:480",
+      "-r", "24",
+      "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-profile:v", "baseline",
+      "-b:v", "1000k", "-maxrate", "1300k", "-bufsize", "2000k",
+      "-c:a", "aac", "-b:a", `${AUDIO_KBPS}k`, "-ac", "2",
+      "-movflags", "+faststart",
+      "-shortest",
+      outPath,
+    ];
     const started = Date.now();
-    await execFileAsync(ffmpegPath, args, { timeout: 420000, maxBuffer: 8 * 1024 * 1024 });
+    let encodeErr = null;
+    for (const [label, argv] of [["带静音轨", args], ["常规", plainArgs], ["极简", minimalArgs]]) {
+      try {
+        await execFileAsync(ffmpegPath, argv, { timeout: 420000, maxBuffer: 8 * 1024 * 1024 });
+        encodeErr = null;
+        console.log(`[vlm] 压缩完成(${label}): 耗时 ${Math.round((Date.now() - started) / 1000)}s`);
+        break;
+      } catch (e) {
+        encodeErr = e;
+        console.warn(`[vlm] 压缩(${label})失败，尝试下一种: ${String(e?.message).slice(0, 200)}`);
+      }
+    }
+    if (encodeErr) throw encodeErr;
     const bytes = fs.statSync(outPath).size;
     console.log(`[vlm] 压缩完成: ${(bytes / 1048576).toFixed(1)}MB, 耗时 ${Math.round((Date.now() - started) / 1000)}s, 码率 ${videoKbps}k`);
     const key = `compressed/${taskId}.mp4`;
     await putFile(key, outPath);
-    fs.unlinkSync(outPath);
     const url = await signedGetUrl(key, 7200);
+    // 注意：本地压缩件先保留（localPath），让 Gemini 直接从磁盘上传，
+    // 省掉一次「从 COS 再拉一遍」的外网下行流量（COS 外网下行 0.5 元/GB，是主要成本）。
+    // 调用方用完后必须 fs.unlinkSync(localPath) 清理（/tmp 只有 512MB）。
     return {
-      url, compressed: true, seconds, bytes,
+      url, compressed: true, seconds, bytes, localPath: outPath,
       reason: tooLong
         ? `原片 ${(rawSeconds / 60).toFixed(1)} 分钟，已截取前 5 分钟并压缩至 ${(bytes / 1048576).toFixed(0)}MB`
         : `原片 ${(sizeBytes / 1048576).toFixed(0)}MB，已压缩至 ${(bytes / 1048576).toFixed(0)}MB`,
     };
   } catch (err) {
+    const stderr = String((err && (err.stderr || err.message)) || "").slice(0, 400);
     console.error("[vlm] 压缩失败，降级使用原片:", err?.message);
     if (outPath) { try { fs.unlinkSync(outPath); } catch (e) { /* ignore */ } }
-    return { ...base, seconds, reason: `压缩失败(${String(err?.message).slice(0, 80)})，已用原片` };
+    return { ...base, seconds, transcodeError: stderr, reason: `压缩失败(${stderr})，已用原片` };
   }
 }
 
@@ -428,7 +572,7 @@ function buildPlayersPrompt(durationSec, ctx) {
 ${ctxPart}
 
 【任务】识别我方球员，并对每人写具体的表现点评。
-最多 6 人。优先列有清晰球衣号码的球员；如果某个焦点球员确实没有号码或看不清号码，也要列出，并按规则标注为"无号码球衣N"。
+最多 6 人。优先列有清晰球衣号码的球员；如果某个焦点球员确实没有号码或看不清号码，也要列出。
 
 【输出】只输出JSON（不要其他文字）：
 {
@@ -436,6 +580,7 @@ ${ctxPart}
     {
       "number": "10",
       "anonymous_index": null,
+      "unconfirmed_number": false,
       "team": "home",
       "role": "进攻尖刀",
       "notes": [
@@ -451,14 +596,16 @@ ${ctxPart}
 
 【字段要求】
 - number：球衣号码。
-  · 号码清晰可辨：写实际数字字符串，如 "10"。
-  · 确实没有号码或完全看不清：number 填 null，同时使用 anonymous_index 字段按顺序编号为 1、2、3...。
-    例如：一个无号码焦点球员 → number: null, anonymous_index: 1；第二个无号码焦点球员 → number: null, anonymous_index: 2。
-  · 严禁把无号码球员写成 "10""7" 这类虚假号码；严禁用 "无号码球衣1" 等字符串填充 number。
+  · 号码清晰可辨：写实际数字字符串，如 "10"，unconfirmed_number=false。
+  · 确实没有号码或完全看不清：number 填 null，**同时设 unconfirmed_number=true**（前端会标"号码未确认"）。
+    + 用 anonymous_index 字段按顺序编号为 1、2、3...
+    例如：一个无号码焦点球员 → number: null, anonymous_index: 1, unconfirmed_number: true；
+        第二个无号码焦点球员 → number: null, anonymous_index: 2, unconfirmed_number: true。
+  · 严禁把无号码球员硬编为 "10""7" 这类虚假号码。
 - anonymous_index：number 为 null 时才需要。从 1 开始按出场顺序或重要性递增的整数。有真实号码的球员此字段可省略。
 - team：固定 "home"（我方）。
-- role：4~6 字的角色概括，必须从你看到的实际表现推断，例如：组织核心 / 进攻尖刀 / 边路快马 / 后场清扫 / 全能中场 / 定位球点。
-  ⚠️ 不要写"前锋""中场""后卫""门将"这类笼统位置，也不要猜位置。
+- role：4~6 字的角色概括，从你看到的实际表现推断：组织核心 / 进攻尖刀 / 边路快马 / 后场清扫 / 全能中场 / 定位球点 / 中前场组织者 等。
+  ⚠️ 不要写"前锋""中场""后卫""门将"这类笼统位置，也不要硬猜具体位置。
 - notes：2~3 条具体表现描述，每条 15~40 字。
   必须是你在画面里真实看到的动作：拿球位置、跑动方向、对抗结果、出球选择、防守回追等。
   ⚠️ 禁止空话：不许出现"表现不错""比较活跃""有一定贡献""值得肯定"这类没有信息量的句子。
@@ -466,7 +613,12 @@ ${ctxPart}
 - tags：2~4 个 2~5 字关键词，从 notes 提炼（如"抢点积极""回防慢""一脚出球"）。
 - is_mvp：所有球员中表现最突出的一人写 true，其余写 false。只能有一个 true。
 
-如果视频里一个能说出具体表现的球员都没有，players 返回空数组 []。`;
+【业余球赛特别说明】
+业余比赛球衣号码常模糊、动作风格不明显，这是常态。
+- 只要你能从画面说出 1-2 个具体动作（拿球、跑动、对抗、出球），就该把该球员列出来，号码看不清就标 unconfirmed_number=true。
+- 不要因为"号码模糊"或"画面不够清晰"就整个 players 返空 —— 空数组 = 整段视频无法分析，宁可列表格稍弱也要给用户看。
+- 但仍要"宁缺毋滥"：纯靠脑补的、没有具体动作的，不要列。
+- 如果一个具体动作都说不出，players 才返回空数组 []。`;
 }
 
 function buildPassPrompt(durationSec, ctx) {
@@ -483,14 +635,20 @@ ${ctxPart}
 【输出】只输出JSON（不要其他文字）：
 {
   "events": [
-    {"time_seconds": 12.5, "clock": "23:41", "type": "pass", "team": "home", "player_number": "10", "outcome": "success", "note": "短传给队友"}
+    {"time_seconds": 12.5, "clock": "23:41", "type": "pass", "team": "home", "player_number": "10", "outcome": "success", "unconfirmed": false, "note": "短传给队友"}
   ]
 }
 - time_seconds 必须在 0 ~ ${Math.round(durationSec)} 之间（这是【视频内】的秒数，不是比赛时间）
 - clock：如果画面上有比赛计时器/记分牌/直播字幕条显示比赛时间，填你看到的时间文本（如 "23:41"）；看不到计时器就填 null，不要推算
 - type 固定 "pass"
-- player_number 看不清写 null
-- 没有传球则 events 返回 []`;
+- player_number 看不清写 null（如有 anonymous_index 也保留，便于关联球员）
+- unconfirmed：true=这条事件是"软判断"（号码/类型/结果不太确定）；false=清晰可辨。**业余场景鼓励标 unconfirmed=true，不要为了"看起来可靠"而硬编。**
+- note 简述动作，10 字内。
+
+【业余场景】
+- 业余球赛节奏慢、传球常被截断，**没看到也算常态**。
+- 但只要能数出 1-3 次明确传球（短传/转移/回做），就请列出，号码模糊就把 unconfirmed 标 true。
+- 整段视频完全没看到任何传球动作，events 才返回 []。`;
 }
 
 function buildShotPrompt(durationSec, ctx) {
@@ -517,13 +675,14 @@ ${ctxPart}
 【输出】只输出JSON（不要其他文字）：
 {
   "events": [
-    {"time_seconds": 35.0, "clock": "24:03", "type": "shot", "team": "home", "player_number": "10", "outcome": "failed", "note": "禁区外远射偏出"}
+    {"time_seconds": 35.0, "clock": "24:03", "type": "shot", "team": "home", "player_number": "10", "outcome": "failed", "unconfirmed": false, "note": "禁区外远射偏出"}
   ]
 }
 - time_seconds 必须在 0 ~ ${Math.round(durationSec)} 之间（视频内秒数）
 - clock：画面上有比赛计时器/记分牌就填看到的时间文本（如 "24:03"）；看不到填 null，不要推算
 - type 用 "shot" 或 "goal"
-- 没有射门/进球则 events 返回 []`;
+- unconfirmed：true=这条是软判断（如"疑似射门，角度不太正"）；false=清晰可辨。
+- 没有射门/进球则 events 返回 []（业余短赛确实经常没射门，返空正常）`;
 }
 
 function buildDefensePrompt(durationSec, ctx) {
@@ -543,12 +702,13 @@ ${ctxPart}
 【输出】只输出JSON（不要其他文字）：
 {
   "events": [
-    {"time_seconds": 22.0, "clock": "23:50", "type": "tackle", "team": "home", "player_number": "4", "outcome": "success", "note": "中场逼抢断球"}
+    {"time_seconds": 22.0, "clock": "23:50", "type": "tackle", "team": "home", "player_number": "4", "outcome": "success", "unconfirmed": false, "note": "中场逼抢断球"}
   ]
 }
 - time_seconds 必须在 0 ~ ${Math.round(durationSec)} 之间（视频内秒数）
 - clock：画面上有比赛计时器/记分牌就填看到的时间文本；看不到填 null，不要推算
-- 没有防守事件则 events 返回 []`;
+- unconfirmed：true=这条是软判断（动作模糊/位置不确定）；false=清晰可辨。
+- 没有防守事件则 events 返回 []（业余短赛防守动作少，返空正常）`;
 }
 
 function buildSummaryPrompt(durationSec, ctx) {
@@ -564,10 +724,10 @@ ${ctxPart}
   "score": {"home": null, "away": null},
   "score_source": "unknown",
   "score_note": null,
-  "headline": "一句话概括（具体，如'我方中场控制但最后一传质量差'）",
-  "highlight": "最精彩一刻（具体描述动作，如'10号禁区外远射击中横梁'）",
-  "weakness": "最大问题（具体）",
-  "next_focus": "下一步建议（具体）"
+  "headline": "一句话总评（15~35 字，具体描述这场比赛的核心特点，如'我方中场控制但最后一传质量差'）",
+  "highlight": "最大亮点（具体描述某个动作或时段，不要空话）",
+  "weakness": "最大问题（具体描述，不要空话）",
+  "next_focus": "下一阶段建议（具体可执行，如'前场 10 号拿球后多传倒三角'）"
 }
 
 【比分规则 · 最重要】
@@ -580,8 +740,10 @@ ${ctxPart}
 ⚠️ 没在画面上亲眼看到数字，就必须是 null。填 null 是正确答案，不是失败。
 ⚠️ 也不要因为没看到进球就填 0-0——没看到记分牌一律 null。
 
-【文字规则】
-- headline/highlight/weakness/next_focus 必须具体，禁止空话套话
+【文字规则 · 业余场景特别说明】
+- headline 必须基于视频内容写出**具体判断**（如"我方上半场高位逼抢有效"），不能写"重点已整理好"这种空话。
+  → 业余球赛没记分牌、没字幕条，但**场面、节奏、配合质量你一定能看出来**，写出你的具体判断。
+- highlight / weakness / next_focus 也必须具体。空话一律返空。
 - 不要编造视频里没有发生的事情
 - 不要在文字里提及具体比分`;
 }
@@ -620,7 +782,7 @@ ${ctxPart}
 【严格规则 · 最重要】
 - 只写你在画面里【真实看到】的动作。看不清、不确定 → 该条不要输出，宁缺毋滥。
 - 不要编造球员号码：看清号码就填数字字符串（如 "10"）；看不清号码就填 null，不要猜。
-- 不要为了凑数而编：最多 5 条，没看清就返回空数组 []。
+- 不要为了凑数而编：最多 5 条，没看清就返回空数组 []。业余球赛动作粗糙是常态，能看到能说的就列，不要全返空。
 - issue 没有明显问题时填 null，不要硬挑毛病。
 - advice 要具体到"怎么做"（如"支撑脚再靠近球 10-15 厘米，射门时重心前压"），禁止"加强练习""继续努力"这类空话。`;
 }
@@ -673,6 +835,7 @@ function mergeRoundsToDashboard(rounds, durationSec) {
           team: evt.team ?? null,
           player_number: evt.player_number ?? null,
           outcome: evt.outcome ?? null,
+          unconfirmed: asBool(evt.unconfirmed),
           note: evt.note ?? null,
           source: "qwen-vlm",
         });
@@ -738,6 +901,7 @@ function mergeRoundsToDashboard(rounds, durationSec) {
       playerMap[key] = {
         number: num,
         anonymous_index: anonymousIndex,
+        unconfirmed_number: asBool(p.unconfirmed_number),
         name: null,
         // 位置识别实测不可靠（会把后卫认成前锋），已彻底不再输出
         position: null,
@@ -882,12 +1046,27 @@ function mergeRoundsToDashboard(rounds, durationSec) {
       };
     })(),
     teams: { home: buildTeam("home"), away: buildTeam("away") },
-    summary: {
-      headline: summaryRound?.headline || null,
-      highlight: summaryRound?.highlight || null,
-      weakness: summaryRound?.weakness || null,
-      next_focus: summaryRound?.next_focus || null,
-    },
+    summary: (() => {
+      // 兜底链：模型这轮没给总评时，依次退到亮点 → 事件统计，
+      // 避免看板出现"整片空白"（用户最不能接受的结果）。
+      const headline =
+        cleanText(summaryRound?.headline) ||
+        cleanText(summaryRound?.highlight) ||
+        (deduped.length || players.length
+          ? `本场共识别到 ${deduped.length} 个事件、${players.length} 名球员的表现`
+          : null);
+      const nextFocus = cleanText(summaryRound?.next_focus) || cleanText(summaryRound?.weakness) || null;
+      return {
+        headline,
+        // 兼容前端字段名（前端用 overall/recommendation/focus）
+        overall: headline,
+        highlight: summaryRound?.highlight || null,
+        weakness: summaryRound?.weakness || null,
+        next_focus: nextFocus,
+        recommendation: nextFocus,
+        focus: nextFocus,
+      };
+    })(),
     players,
     technique_summary: techniqueSummary,
     events: deduped,
@@ -981,12 +1160,27 @@ exports.main = async (event) => {
       // - 千问：整视频 URL 直传，每轮把 URL 再交给模型
       // - Gemini：先把视频传到 Files API 拿到 file_uri，之后 6 轮复用同一份，不重复传
       let askVideo;
-      if (vlmProvider === "gemini") {
-        await updateTask(taskId, { stage: "uploading", progress: 5, round_info: "上传视频到 Gemini" });
-        const uploaded = await geminiUploadVideo(videoUrl, taskId);
-        askVideo = (prompt) => callGeminiWithVideo(uploaded.uri, uploaded.mimeType, prompt);
-      } else {
-        askVideo = (prompt) => callQwenWithVideo(videoUrl, prompt);
+      try {
+        if (vlmProvider === "gemini") {
+          await updateTask(taskId, { stage: "uploading", progress: 5, round_info: "上传视频到 Gemini" });
+          const uploaded = await geminiUploadVideo(videoUrl, taskId, prepared.localPath);
+          askVideo = (prompt) => callGeminiWithVideo(uploaded.uri, uploaded.mimeType, prompt);
+        } else {
+          askVideo = (prompt) => callQwenWithVideo(videoUrl, prompt);
+        }
+      } catch (uploadErr) {
+        // 把「有没有压缩、压缩为什么失败」一起带出去，方便定位（否则只能看到一句 FAILED）
+        const diag = prepared?.compressed
+          ? `（已压缩 ${((prepared.bytes || 0) / 1048576).toFixed(1)}MB）`
+          : prepared?.transcodeError
+            ? `（压缩失败回退原片：${prepared.transcodeError}）`
+            : `（未压缩，原片 ${((Number(sizeBytes) || 0) / 1048576).toFixed(1)}MB / ${Math.round(rawDuration)}s）`;
+        throw new Error(`${(uploadErr && uploadErr.message) || uploadErr} ${diag}`);
+      } finally {
+        // 本地压缩件用完即删，避免占用 /tmp（512MB）与跨调用污染
+        if (prepared.localPath) {
+          try { fs.unlinkSync(prepared.localPath); } catch (e) { /* ignore */ }
+        }
       }
 
       for (let i = 0; i < roundDefs.length; i++) {

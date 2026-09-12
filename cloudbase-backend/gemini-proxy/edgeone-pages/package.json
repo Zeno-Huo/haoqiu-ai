@@ -1,0 +1,8 @@
+{
+  "name": "haoqiu-gemini-proxy",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Gemini API 中转代理（EdgeOne Pages Functions）",
+  "scripts": {},
+  "dependencies": {}
+}

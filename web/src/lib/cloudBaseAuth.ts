@@ -27,7 +27,8 @@ async function signIn(): Promise<void> {
 
   const result = await auth.signInAnonymously()
   if (result?.error) throw new Error(`匿名登录失败：${result.error.message || 'unknown'}`)
-  console.error('[cloudbase] signInAnonymously result=', JSON.stringify(result))
+  // 注意：这里绝对不要对 result 做 JSON.stringify —— SDK 返回值里含 window 等循环引用，
+  // 一序列化就抛 "Converting circular structure to JSON" 并让整个登录流程失败。
 
   // 匿名登录返回后再确认一次登录态，避免后续调用抢跑到凭证写入之前。
   const confirmed = await auth.getLoginState()

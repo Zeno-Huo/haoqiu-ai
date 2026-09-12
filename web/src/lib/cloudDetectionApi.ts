@@ -32,7 +32,23 @@ const API_BASE =
   (import.meta.env.VITE_DETECTION_API_BASE as string | undefined)?.trim().replace(/\/$/, '') ||
   'https://haoqiu-ai-prod-d3g2cm2xn3255c273.service.tcloudbase.com/haoqiu-api'
 
-/** 通过 HTTP 访问服务直调后端；前端附带 CloudBase 匿名登录的访问令牌，后端从中解析用户身份。 */
+/** 安全描述任意异常：直接对含循环引用（如 window）的对象 JSON.stringify 会抛新错，掩盖原始故障。 */
+function describeError(error: unknown): string {
+  if (error instanceof Error) return `${error.name}: ${error.message}`
+  if (typeof error === 'string') return error
+  try {
+    return JSON.stringify(error) ?? String(error)
+  } catch {
+    return String(error)
+  }
+}
+
+/**
+ * 通过 HTTP 访问服务直调后端；前端附带 CloudBase 登录态的访问令牌，后端 userIdFromBearer 解析出用户身份。
+ *
+ * 为什么不走 callFunction：本环境的匿名用户没有调用云函数的权限（平台 OPA 策略，返回
+ * EXCEED_AUTHORITY），而 HTTP 访问服务允许匿名令牌通过、由后端自行解析 JWT 里的 user_id。
+ */
 async function invoke<T>(method: 'GET' | 'POST' | 'DELETE', path: string, payload?: Record<string, unknown>, expectedStatus?: number): Promise<T> {
   const accessToken = await getCloudBaseAccessToken()
   const url = `${API_BASE}${path}`
@@ -48,8 +64,7 @@ async function invoke<T>(method: 'GET' | 'POST' | 'DELETE', path: string, payloa
       body: method === 'GET' ? undefined : JSON.stringify(payload ?? {}),
     })
   } catch (error) {
-    const detail = error instanceof Error ? `${error.name}: ${error.message}` : typeof error === 'string' ? error : JSON.stringify(error)
-    throw new CloudDetectionApiError(`无法连接 CloudBase 服务 [${detail}]`)
+    throw new CloudDetectionApiError(`无法连接 CloudBase 服务 [${describeError(error)}]`)
   }
 
   const text = await response.text()

@@ -103,6 +103,7 @@ function PlayerCard({ player, rank }: { player: InstantPlayer; rank: number }) {
       <span>{badgeText}</span>
       <div>
         <h3>{titleText}</h3>
+        {player.unconfirmedNumber && <em className="instant-player-uncertain" title="号码是模型根据场上位置/球衣颜色推测，未在画面上清晰看到">号码未确认</em>}
         {player.role && <p className="instant-player-role">{player.role}</p>}
       </div>
       {player.isMvp && <em className="instant-player-mvp">本场最佳</em>}
@@ -125,6 +126,7 @@ function KeyMoments({ events }: { events: InstantEvent[] }) {
     <b>{clockText(item)}</b>
     <i className={`instant-moment-kind is-${kind}`}>{EVENT_LABEL[kind]}</i>
     <span>{item.note || item.label || ''}</span>
+    {item.unconfirmed && <em className="instant-moment-uncertain" title="模型推测，非画面清晰识别">推测</em>}
   </li>)}</ol>
 }
 
