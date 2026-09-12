@@ -48,6 +48,8 @@ export interface InstantPlayer {
   number?: string
   /** 无号码球员的顺序编号（从 1 开始）。有真实号码时为 undefined。 */
   anonymousIndex?: number
+  /** 号码是模型"软判断"（业余场景看不清时由模型推测给出），前端会标"号码未确认"。 */
+  unconfirmedNumber?: boolean
   /** 从表现推断的角色（如"进攻尖刀"）。位置识别实测会认错，已不再使用。 */
   role?: string
   /** 2~4 个关键词标签。 */
@@ -56,6 +58,9 @@ export interface InstantPlayer {
   isMvp: boolean
   score?: number
   title?: string
+  strength?: string
+  weakness?: string
+  ratings?: { participation?: number; attack?: number; defense?: number; decision?: number }
   highlight?: { label?: string; value?: number; note?: string }
   stats: InstantTeamStats
   insights: string[]
@@ -72,6 +77,8 @@ export interface InstantEvent {
   label?: string
   type?: string
   note?: string
+  /** 模型标记的"软判断"（如"疑似射门""号码模糊"），前端会标"推测"。 */
+  unconfirmed?: boolean
 }
 
 /** 比分来源：记分牌读取 / 由进球事件推导 / 未识别（可手动补充）。 */
@@ -109,6 +116,18 @@ function number(value: unknown): number | undefined {
 
 function text(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value.trim() : undefined
+}
+
+/**
+ * 宽容解析布尔值。模型经常把 true 写成字符串 "true"/"是"/"yes"，
+ * 用 === true 严格判断会整片丢失标记，这里统一兜住。
+ */
+function boolish(value: unknown): boolean {
+  if (value === true || value === 1) return true
+  if (typeof value === 'string') {
+    return ['true', '1', 'yes', 'y', '是', '确认', '疑似', 'maybe'].includes(value.trim().toLowerCase())
+  }
+  return false
 }
 
 /** 支持 {home,away}、{our,opponent} 和 [我方,对方] 三种后端输出。 */
@@ -155,6 +174,7 @@ function event(value: unknown): InstantEvent {
     label: text(first(item, ['note', 'description', '说明'])) || text(first(item, ['label', 'title', '事件'])),
     type: text(first(item, ['type', 'event_type', '事件'])),
     note: text(first(item, ['note', 'description', '说明'])),
+    unconfirmed: boolish(first(item, ['unconfirmed', 'is_guess', '推测'])),
   }
 }
 
@@ -186,11 +206,20 @@ function player(value: unknown, index: number): InstantPlayer {
     name: text(first(item, ['name', '姓名'])),
     number: text(first(item, ['number', '号码'])),
     anonymousIndex: number(first(item, ['anonymous_index', 'anonymousIndex', '无号码编号'])),
+    unconfirmedNumber: boolish(first(item, ['unconfirmed_number', 'unconfirmedNumber', '号码未确认'])),
     role: text(first(item, ['role', '角色'])),
     tags,
-    isMvp: first(item, ['is_mvp', 'isMvp', 'mvp']) === true,
+    isMvp: boolish(first(item, ['is_mvp', 'isMvp', 'mvp'])),
     score: number(first(item, ['score', 'rating', '评分'])),
     title: text(first(item, ['title', '称号'])),
+    strength: text(item.strength),
+    weakness: text(item.weakness),
+    ratings: (() => {
+      const values = object(item.ratings) || object(item.dimension_scores)
+      if (!values) return undefined
+      const valid = (keys: string[]) => { const n = number(first(values, keys)); return n != null && n >= 0 && n <= 10 ? n : undefined }
+      return { participation: valid(['participation', '参与度']), attack: valid(['attack', '进攻']), defense: valid(['defense', '防守']), decision: valid(['decision', '决策']) }
+    })(),
     highlight: (() => {
       const itemValue = object(first(item, ['highlight', '亮点']))
       if (!itemValue) return undefined

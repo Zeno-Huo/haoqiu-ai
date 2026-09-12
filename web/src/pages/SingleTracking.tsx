@@ -1,7 +1,9 @@
+import AnalysisLoading from '../components/AnalysisLoading'
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import type { CloudDetectionJob } from '../cloudDetectionTypes'
 import { createInstantAnalysisJob, getInstantAnalysisJob, isCloudDetectionConfigured } from '../lib/cloudDetectionApi'
+import type { InstantTeamContext } from '../lib/cloudDetectionApi'
 import { ensureUploadedVideo, type UploadPhase } from '../lib/cloudUploadWorkflow'
 import { getMatch, saveMatch } from '../lib/storage'
 import { getCachedVideoFile } from '../lib/videoFileCache'
@@ -12,7 +14,7 @@ async function createWorkflow(
   matchId: string,
   file: File | undefined,
   listener: (phase: UploadPhase, progress: number) => void,
-  context?: { team_name?: string; jersey_hint?: string },
+  context?: InstantTeamContext,
 ) {
   const match = getMatch(matchId)
   if (!match) throw new Error('找不到这段视频')
@@ -48,9 +50,10 @@ export default function SingleTracking() {
     const match = initialMatch
     const ctx = match.ourTeamContext
     const focusHint = ctx?.jerseyHint?.trim()
-    const jobContext = focusHint
-      ? { jersey_hint: focusHint, team_name: ctx?.teamName }
-      : (ctx?.teamName ? { team_name: ctx.teamName } : undefined)
+    const jobContext: InstantTeamContext = {
+      analysis_mode: 'personal_match',
+      ...(focusHint ? { jersey_hint: focusHint, team_name: ctx?.teamName } : ctx?.teamName ? { team_name: ctx.teamName } : {}),
+    }
     async function run() {
       try {
         const latest = getMatch(match.id) ?? match
@@ -86,7 +89,10 @@ export default function SingleTracking() {
   if (!initialMatch) {
     return (
       <div className="page-shell grid place-items-center px-4">
-        <Link className="btn-primary" to="/">返回首页</Link>
+        <section className="panel max-w-md p-6 text-center">
+          <p className="text-[var(--text-secondary)]">这段视频只保留在当前页面，刷新或重新打开后需要再次上传。</p>
+          <Link className="btn-primary mt-5" to="/match/new?mode=single">重新上传视频</Link>
+        </section>
       </div>
     )
   }
@@ -94,116 +100,15 @@ export default function SingleTracking() {
   const success = job?.status === 'succeeded'
   const failed = job?.status === 'failed'
   const parsed = job ? parseInstantAnalysis(job) : {}
-  const hasUploadId = !!initialMatch.cloudUploadId || !!job
-  const isUploading = !hasUploadId
-  const isAnalyzing = hasUploadId && !success && !failed
-  const isReportReady = success
   const focusHint = initialMatch.ourTeamContext?.jerseyHint?.trim()
   const progress = job ? Math.min(100, Math.max(0, job.progress)) : uploadProgress
-  const stage = !job
+  const stage = failed ? '分析未完成' : !job
     ? (phase === 'uploading' ? '正在上传视频' : '正在准备视频')
     : job.status === 'queued' ? '正在等待分析' : '正在生成结果'
 
-  const steps = [
-    { key: 'upload', label: '上传视频', done: !isUploading, active: isUploading },
-    { key: 'analyze', label: 'AI 分析', done: isReportReady, active: isAnalyzing },
-    { key: 'report', label: '查看报告', done: isReportReady, active: isReportReady },
-  ]
+  if (success && parsed.dashboard) return <InstantDashboard dashboard={parsed.dashboard} matchId={initialMatch.id} mode="personal" focusHint={focusHint} />
 
-  return (
-    <div className="page-shell px-4 py-10">
-      <div className="mx-auto max-w-3xl">
-        <header className="mb-8">
-          <p className="eyebrow">个人比赛</p>
-          <h1 className="mt-2 text-3xl font-semibold text-[var(--text-primary)]">
-            {isReportReady ? '你的本场表现' : '正在分析你的表现'}
-          </h1>
-          <p className="mt-2 text-sm leading-6 text-[var(--text-muted)]">
-            {isReportReady ? 'AI 已完成分析，以下是你的个人表现报告' : '请稍等，AI 正在为你生成个人复盘报告'}
-          </p>
-        </header>
+  if (!success) return <AnalysisLoading filename={initialMatch.videoName || '比赛视频'} progress={progress} stage={!job ? stage : job.status === 'queued' ? '正在等待分析' : '正在梳理比赛表现'} uploading={!job} error={!configured?'分析服务暂时不可用':failed?job?.error?.message || '这次分析没有完成':message || undefined} onRetry={message?()=>setRetryNonce(n=>n+1):undefined}/>
 
-        {!isReportReady && (
-          <div className="mb-8 flex items-center justify-between gap-2">
-            {steps.map((step, idx) => (
-              <div key={step.key} className="flex flex-1 items-center gap-2">
-                <div className={`flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full text-sm font-semibold transition ${
-                  step.done ? 'bg-[var(--ai)] text-white' : step.active ? 'bg-[var(--ai)]/15 text-[var(--ai)] ring-2 ring-[var(--ai)]/30' : 'bg-[var(--surface-raised)] text-[var(--text-muted)]'
-                }`}>
-                  {step.done ? '✓' : idx + 1}
-                </div>
-                <span className={`text-sm font-medium transition ${step.active ? 'text-[var(--text-primary)]' : step.done ? 'text-[var(--ai)]' : 'text-[var(--text-muted)]'}`}>{step.label}</span>
-                {idx < steps.length - 1 && <div className={`mx-2 h-px flex-1 ${step.done ? 'bg-[var(--ai)]' : 'bg-[var(--line)'}`} />}
-              </div>
-            ))}
-          </div>
-        )}
-
-        {!configured ? (
-          <section className="panel p-6"><h2 className="text-lg font-semibold">分析暂时不可用</h2><Link className="btn-primary mt-5" to="/match/new?mode=single">重新选择视频</Link></section>
-        ) : isReportReady ? (
-          <section className="panel p-5 sm:p-6">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <h2 className="text-xl font-semibold text-[var(--text-primary)]">你的本场表现</h2>
-                <p className="mt-0.5 text-sm text-[var(--text-muted)]">{initialMatch.videoName}</p>
-              </div>
-              <span className="status-text"><span className="status-dot bg-emerald-500" />已完成</span>
-            </div>
-
-            <div className="mt-4 inline-flex items-center gap-2 rounded-full border border-[var(--ai)] bg-[var(--ai)]/10 px-3 py-1 text-sm text-[var(--ai)]">
-              {focusHint ? `追踪目标：${focusHint}` : '自动锁定画面中最常出现的人'}
-            </div>
-
-            {parsed.dashboard ? (
-              <InstantDashboard dashboard={parsed.dashboard} matchId={initialMatch.id} />
-            ) : parsed.narrative ? (
-              <div className="mt-5"><Narrative content={parsed.narrative} /></div>
-            ) : (
-              <div className="mt-5 rounded-md border border-[var(--line)] bg-[var(--content)] p-4">
-                <p className="text-sm font-medium text-[var(--text-secondary)]">结果正在整理</p>
-                <p className="mt-1 text-xs leading-5 text-[var(--text-muted)]">AI 已看完这场球，正在生成你的个人复盘。</p>
-              </div>
-            )}
-          </section>
-        ) : (
-          <section className="panel p-5 sm:p-6">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div><p className="font-medium text-[var(--text-primary)]">{initialMatch.videoName}</p></div>
-              <span className="status-text">
-                <span className="status-dot" />
-                {isUploading ? '上传中' : failed ? '未完成' : '分析中'}
-              </span>
-            </div>
-
-            <div className="mt-7 h-2.5 overflow-hidden rounded-full bg-[var(--surface-raised)]">
-              <div className="h-full rounded-full bg-[var(--ai)] transition-[width] duration-500 ease-out" style={{ width: `${Math.max(0, Math.min(100, progress))}%` }} />
-            </div>
-            <div className="mt-3 flex justify-between text-sm text-[var(--text-secondary)]">
-              <span>{stage}</span>
-              <b className="font-score text-[var(--ai)]">{Math.round(progress)}%</b>
-            </div>
-
-            {isUploading && <p className="mt-3 text-xs text-[var(--text-muted)]">视频上传完成后，AI 将自动开始分析</p>}
-            {isAnalyzing && <p className="mt-3 text-xs text-[var(--text-muted)]">AI 正在分析，完成后会自动展示你的报告</p>}
-
-            {message && (
-              <div className="mt-6 rounded-md border border-[var(--attack)] bg-[var(--content)] p-4 text-sm text-[var(--attack)]">
-                {message}
-                <div className="mt-4"><button className="btn-secondary" type="button" onClick={() => setRetryNonce((value) => value + 1)}>再试一次</button></div>
-              </div>
-            )}
-            {failed && (
-              <div className="mt-6 rounded-md border border-[var(--danger)] bg-[var(--content)] p-4">
-                <p className="text-sm text-[var(--danger)]">{job?.error?.message || '这次分析没有完成'}</p>
-                <div className="mt-4"><Link className="btn-secondary" to="/match/new?mode=single">重新选择视频</Link></div>
-              </div>
-            )}
-          </section>
-        )}
-
-        <div className="mt-8"><Link className="btn-secondary" to="/">返回功能选择</Link></div>
-      </div>
-    </div>
-  )
+  return <main className="vr-page"><header className="vr-nav"><Link to="/">返回</Link><h1>比赛复盘</h1><span/></header>{parsed.narrative?<Narrative content={parsed.narrative}/>:<p className="vr-empty">本次报告暂时无法展示</p>}<Link className="vr-primary" to="/match/new?mode=single">重新选择视频</Link></main>
 }

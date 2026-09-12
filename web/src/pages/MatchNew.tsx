@@ -1,19 +1,11 @@
 import { useRef, useState } from 'react'
+import VisualIcon from '../components/VisualIcon'
+import '../visual-refresh.css'
 import { Navigate, Link, useNavigate, useSearchParams } from 'react-router-dom'
-import { getTeamProfile, listMatches, newId, saveMatch } from '../lib/storage'
+import { getTeamProfile, newId, saveMatch } from '../lib/storage'
 import { cacheVideoFile } from '../lib/videoFileCache'
 import type { Match, Player } from '../types'
 
-type AnalysisMode = 'instant' | 'single' | 'training'
-
-// 个人训练预设项目库：想增删直接在数组里加一行，用户仍可「自定义」任意项目，不框死。
-const TRAINING_PRESETS = ['射门', '传球', '停球', '带球', '颠球', '头球', '变向过人', '射门力量']
-
-const MODE_COPY: Record<AnalysisMode, { title: string; subtitle: string; start: string }> = {
-  instant: { title: '即时分析', subtitle: '上传比赛视频，快速看懂球队表现', start: '立即分析' },
-  single: { title: '个人比赛', subtitle: '找到你，看看这场踢得怎么样', start: '分析个人表现' },
-  training: { title: '个人训练', subtitle: '上传短视频，获得一个明确练习建议', start: '分析训练动作' },
-}
 
 function videoDuration(seconds?: number) {
   if (!seconds) return '视频'
@@ -32,12 +24,8 @@ export default function MatchNew() {
   const [selectedFile, setSelectedFile] = useState<File>()
   const [videoMeta, setVideoMeta] = useState<Match['videoMeta']>()
   const [videoState, setVideoState] = useState<'idle' | 'probing' | 'ready' | 'error'>('idle')
-  const [source, setSource] = useState<'new' | 'previous'>('new')
-  const [previousMatch, setPreviousMatch] = useState<Match>()
   const [jerseyHint, setJerseyHint] = useState('')
   const [singleJerseyHint, setSingleJerseyHint] = useState('')
-  const [trainingAction, setTrainingAction] = useState('')
-  const [trainingCustom, setTrainingCustom] = useState('')
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
 
@@ -57,23 +45,23 @@ export default function MatchNew() {
   }
 
   if (!mode) return null
-  const modeCopy = MODE_COPY[mode]
-  const canStart = videoState === 'ready' && Boolean(videoName) &&
-    (mode !== 'instant' || Boolean(jerseyHint.trim())) &&
-    (mode !== 'training' || Boolean(trainingAction))
-
-  function selectPrevious(item: Match) {
-    setPreviousMatch(item)
-    setVideoName(item.videoName || item.name)
-    setVideoMeta(item.videoMeta)
-    setSelectedFile(undefined)
-    setVideoState('ready')
-    setError('')
+  if (mode === 'training') {
+    return <div className="page-shell mode-page"><div className="mode-page-inner">
+      <Link className="flow-back" to="/match/new?mode=personal">← 返回</Link>
+      <header className="mode-page-header"><h1>个人训练</h1><p>动作评价和下一次练习建议</p></header>
+      <section className="panel p-8 text-center">
+        <p className="text-lg font-semibold text-[var(--text-primary)]">个人训练正在开发中</p>
+        <p className="mt-2 text-sm leading-6 text-[var(--text-muted)]">目前先攻克团队模式和个人比赛的比赛分析，训练动作分析会在后续版本上线。</p>
+        <Link className="btn-primary mt-6" to="/match/new?mode=personal">返回选择</Link>
+      </section>
+    </div></div>
   }
+  const canStart = videoState === 'ready' && Boolean(videoName) &&
+    (mode !== 'instant' || Boolean(jerseyHint.trim()))
 
-  // 系统会自动压缩，所以这里只挡真正离谱的文件（1GB / 20 分钟）
+  // 系统会自动压缩，所以这里只挡真正离谱的文件（1GB / 5 分钟）
   const HARD_MAX_BYTES = 1024 * 1024 * 1024
-  const HARD_MAX_SECONDS = 20 * 60
+  const HARD_MAX_SECONDS = 5 * 60
   // 超过这个值会走云端压缩，提前告诉用户
   const AUTO_COMPRESS_BYTES = 150 * 1024 * 1024
   const AUTO_COMPRESS_SECONDS = 5 * 60
@@ -83,10 +71,10 @@ export default function MatchNew() {
     setError('')
     setNotice('')
     if (!file) return
+    setSelectedFile(undefined); setVideoName(''); setVideoMeta(undefined)
     if (!/\.(mp4|mov)$/i.test(file.name)) { setError('请选择 MP4 或 MOV 视频'); setVideoState('error'); return }
     if (file.size > HARD_MAX_BYTES) { setError('视频不能超过 1GB'); setVideoState('error'); return }
     setSelectedFile(file)
-    setPreviousMatch(undefined)
     setVideoName(file.name)
     setVideoMeta({ sizeBytes: file.size })
     setVideoState('probing')
@@ -96,17 +84,17 @@ export default function MatchNew() {
     probe.onloadedmetadata = () => {
       if (token !== probeTokenRef.current) return URL.revokeObjectURL(url)
       if (probe.duration > HARD_MAX_SECONDS) {
-        setSelectedFile(undefined); setVideoName(''); setVideoMeta(undefined); setVideoState('error'); setError('请上传 20 分钟以内的视频')
+        setSelectedFile(undefined); setVideoName(''); setVideoMeta(undefined); setVideoState('error'); setError('内测阶段请选取 5 分钟以内的视频，推荐 2–5 分钟的精彩片段')
       } else {
         setVideoMeta({ sizeBytes: file.size, durationSeconds: probe.duration, width: probe.videoWidth, height: probe.videoHeight })
         if (file.size > AUTO_COMPRESS_BYTES || probe.duration > AUTO_COMPRESS_SECONDS) {
-          setNotice('视频超过 5 分钟 / 150MB，上传后会自动压缩到 5 分钟再分析（只分析前 5 分钟）')
+          setNotice('视频较大，上传后将自动压缩。内测阶段优先使用较短、清晰的片段。')
         }
         setVideoState('ready')
       }
       URL.revokeObjectURL(url)
     }
-    probe.onerror = () => { setVideoState('error'); setError('视频读取失败，请换一个文件'); URL.revokeObjectURL(url) }
+    probe.onerror = () => { if (token !== probeTokenRef.current) return URL.revokeObjectURL(url); setVideoState('error'); setError('视频读取失败，请换一个文件'); URL.revokeObjectURL(url) }
     probe.src = url
   }
 
@@ -125,51 +113,29 @@ export default function MatchNew() {
     }))
     const match: Match = {
       id,
-      name: mode === 'instant' ? '球队即时分析' : mode === 'single' ? '个人比赛分析' : '个人训练分析',
+      name: mode === 'instant' ? '团队模式' : '个人比赛分析',
       date: new Date().toISOString().slice(0, 10), type: '7v7', duration: videoMeta?.durationSeconds || 15 * 60,
       teamId: team.id, teamName: team.name, opponentName: '对手', myScore: 0, oppScore: 0,
       videoName, videoSource: selectedFile ? 'local-file' : 'demo', videoMeta,
-      cloudUploadId: previousMatch?.cloudUploadId, instantJobId: previousMatch?.instantJobId, cloudJobId: previousMatch?.cloudJobId,
       ourTeamContext: mode === 'instant'
         ? { jerseyHint: jerseyHint.trim() }
-        : mode === 'training'
-          ? (trainingAction.trim() ? { trainingItem: trainingAction.trim() } : undefined)
-          : (hint ? { jerseyHint: hint } : undefined),
+        : (hint ? { jerseyHint: hint } : undefined),
       identificationStatus: 'pending', players, createdAt: Date.now(),
-      analysisMode: mode === 'single' ? 'single' : mode === 'training' ? 'training' : undefined,
+      analysisMode: mode === 'single' ? 'single' : undefined,
     }
     saveMatch(match)
     if (selectedFile) cacheVideoFile(id, selectedFile)
-    navigate(mode === 'instant' ? `/match/${id}/instant` : mode === 'single' ? `/match/${id}/tracking` : `/match/${id}/training`, { replace: true })
+    navigate(mode === 'instant' ? `/match/${id}/instant` : `/match/${id}/tracking`, { replace: true })
   }
 
-  return <div className="page-shell px-4 py-8"><div className="mx-auto max-w-2xl">
-    <Link className="flow-back" to={mode === 'instant' ? '/' : '/match/new?mode=personal'}>← 返回</Link>
-    <header className="flow-header"><h1>{modeCopy.title}</h1><p>{modeCopy.subtitle}</p></header>
-    <section className="panel p-5 sm:p-6">
-      <div className="source-tabs"><button type="button" className={source === 'new' ? 'is-active' : ''} onClick={() => setSource('new')}>新视频</button><button type="button" className={source === 'previous' ? 'is-active' : ''} onClick={() => setSource('previous')}>历史视频</button></div>
-      {source === 'new' ? <>
-        <input ref={inputRef} className="sr-only" type="file" accept=".mp4,.mov,video/mp4,video/quicktime" onChange={(event) => selectFile(event.target.files?.[0])} />
-        <button className={`upload-dropzone w-full p-6 ${videoName ? 'has-file' : ''}`} type="button" onClick={() => inputRef.current?.click()}><span><span className="upload-icon">{videoName ? '✓' : '↑'}</span><strong className="block text-base text-[var(--text-primary)]">{videoName || '选择视频'}</strong><span className="mt-2 block text-xs text-[var(--text-muted)]">{videoState === 'probing' ? '正在读取视频…' : videoName ? videoDuration(videoMeta?.durationSeconds) : 'MP4 / MOV · 最长15分钟'}</span></span></button>
-      </> : <div className="previous-video-list">{listMatches().slice(0, 6).map((item) => <button key={item.id} type="button" className={`previous-video-row ${previousMatch?.id === item.id ? 'is-selected' : ''}`} onClick={() => selectPrevious(item)}><strong>{item.videoName || item.name}</strong><span>{videoDuration(item.videoMeta?.durationSeconds)}</span><b>选择</b></button>)}</div>}
-
-      {videoState === 'ready' && <div className="analysis-min-fields">
-        {mode === 'instant' && <><label className="field-label">哪边是我们？</label><input className="input-base" value={jerseyHint} maxLength={60} onChange={(event) => setJerseyHint(event.target.value)} placeholder="例如：白衣，画面左侧" /><p>告诉 AI 我方球衣或开场位置</p></>}
-        {mode === 'single' && <div><label className="field-label">球衣提示（选填）</label><input className="input-base" value={singleJerseyHint} onChange={(event) => setSingleJerseyHint(event.target.value)} placeholder="例如：10号红色" /><p>告诉 AI 你的球衣号码 / 颜色，方便锁定你；不填则自动识别画面中最常出现的人</p></div>}
-        {mode === 'training' && <div>
-          <label className="field-label">训练项目</label>
-          <div className="action-options">
-            {TRAINING_PRESETS.map((action) => (
-              <button type="button" key={action} className={trainingAction === action ? 'is-active' : ''} onClick={() => { setTrainingAction(action); setTrainingCustom('') }}>{action}</button>
-            ))}
-          </div>
-          <input className="input-base mt-3" value={trainingCustom} onChange={(event) => { setTrainingCustom(event.target.value); setTrainingAction(event.target.value) }} placeholder="其他训练项目（自定义，如：左脚射门、两人撞墙式）" />
-          <p>选一个训练项目，或自由填写；项目决定报告里重点看哪些指标。</p>
-        </div>}
-      </div>}
-      {error && <p className="flow-error">{error}</p>}
-      {!error && notice && <p className="flow-notice">{notice}</p>}
-      <button className="btn-primary mt-6 w-full" type="button" disabled={!canStart} onClick={start}>{modeCopy.start} →</button>
-    </section>
-  </div></div>
+  return <main className="vr-page vr-upload">
+    <header className="vr-nav"><Link to={mode==='instant'?'/':'/match/new?mode=personal'} aria-label="返回"><VisualIcon name="back"/></Link><h1>上传视频</h1><span/></header>
+    <div className="vr-upload-body">
+      <input ref={inputRef} className="sr-only" type="file" accept=".mp4,.mov,video/mp4,video/quicktime" onChange={e=>selectFile(e.target.files?.[0])}/>
+      <button className="vr-picker" onClick={()=>inputRef.current?.click()} type="button"><span className="vr-pitch" aria-hidden="true"><i/><b/></span><span className="vr-upload-icon"><VisualIcon name={videoState==='ready'?'check':'upload'}/></span><strong>{videoName || '选择视频'}</strong><span>{videoState==='probing'?'正在读取视频…':videoName?videoDuration(videoMeta?.durationSeconds):'MP4 / MOV · 推荐 2–5 分钟'}</span></button>
+      <p className="vr-camera-note">高机位看得更全，平地拍摄可能有偏差</p>
+      {videoState==='ready'&&<div className="vr-context"><label htmlFor="jersey-hint">{mode==='instant'?'哪边是我们？':'球衣提示（选填）'}</label><input id="jersey-hint" className="input-base" maxLength={60} value={mode==='instant'?jerseyHint:singleJerseyHint} onChange={e=>mode==='instant'?setJerseyHint(e.target.value):setSingleJerseyHint(e.target.value)} placeholder={mode==='instant'?'例如：白衣，开场在左侧':'例如：10号，红衣黑裤'}/></div>}
+      {error&&<p className="flow-error" role="alert">{error}</p>}{!error&&notice&&<p className="vr-muted">{notice}</p>}
+    </div><button className="vr-primary" disabled={!canStart} onClick={start}>开始分析<VisualIcon name="arrow"/></button>
+  </main>
 }

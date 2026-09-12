@@ -1,6 +1,9 @@
 # 依赖
 node_modules/
 
+# npm 缓存（沙箱安装时定向到项目内，勿入库）
+.npm-cache/
+
 # 构建产物
 dist/
 .vite/

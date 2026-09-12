@@ -1,69 +1,37 @@
-// localStorage 持久化层：比赛记录、球员名单、分析报告，刷新不丢
+// 会话内记录层：比赛记录只存在于当前页面会话，刷新即清空，不做本地持久化。
+//
+// 2026-09-12 变更：移除 localStorage 中的比赛记录（含历史视频与过往分析）。
+// 现在的语义是「只保留当前这一次」，single-slot、覆盖式：
+//   - 上传 → 分析 → 看报告，全程在当前会话内完成；
+//   - 刷新或直接打开报告链接 → 记录不存在，页面引导重新上传。
+// 球队档案（TEAM_KEY）不属于历史记录，仍按用户设置持久化保存。
 
-import type { Match, PlayerAnalysis, TeamMember, TeamProfile } from '../types'
-import { createRng } from './seed'
+import type { Match, TeamProfile } from '../types'
 
-// v3：看板「亮点称号 + 位置维度」改版后数据模型变更（球员新增必填 position、分析新增 title/highlight），旧 v2 数据不再兼容，换 key 自动作废
-// V1.4 新增 myScore/oppScore 为「向后兼容」的可选字段：旧 v3 数据无此字段，读取时补默认 0，无需换 key 作废
-const MATCHES_KEY = 'haoqiu_ai_matches_v3'
 const TEAM_KEY = 'haoqiu_ai_team_v1'
 
-interface DemoComparison {
-  opponentName: string
-  possessionHome: number
-  possessionAway: number
-  shotsAway: number
-}
+/** 当前这一次分析的记录；刷新页面即丢失。 */
+let currentMatch: Match | undefined
 
-/** 为旧记录生成稳定的演示对比数据；同一场比赛刷新后不变。 */
-function demoComparison(m: Match): DemoComparison {
-  const rng = createRng(`comparison:${m.id}`)
-  const home = 46 + rng.int(0, 8)
-  return {
-    opponentName: '对手',
-    possessionHome: home,
-    possessionAway: 100 - home,
-    shotsAway: Math.max(0, (m.oppScore ?? 0) + rng.int(1, 5)),
-  }
-}
-
-/** 规范化旧数据：补齐比分和稳定的演示对比字段。 */
+/**
+ * 只做类型与取值兜底：缺字段时保持缺省，**绝不生成任何演示/随机数值**。
+ * 数据缺失应由界面显示「未识别 / —」，而不是编一个看起来像真的数。
+ */
 function normalizeMatch(m: Match): Match {
-  const fallback = demoComparison(m)
-  const home = typeof m.possessionHome === 'number' && Number.isFinite(m.possessionHome) ? Math.round(m.possessionHome) : fallback.possessionHome
-  const away = typeof m.possessionAway === 'number' && Number.isFinite(m.possessionAway) ? Math.round(m.possessionAway) : 100 - home
   return {
     ...m,
     myScore: typeof m.myScore === 'number' && Number.isFinite(m.myScore) ? m.myScore : 0,
     oppScore: typeof m.oppScore === 'number' && Number.isFinite(m.oppScore) ? m.oppScore : 0,
-    opponentName: m.opponentName?.trim() || fallback.opponentName,
-    possessionHome: Math.min(100, Math.max(0, home)),
-    possessionAway: Math.min(100, Math.max(0, away)),
-    shotsAway: typeof m.shotsAway === 'number' && Number.isFinite(m.shotsAway) ? Math.max(0, Math.round(m.shotsAway)) : fallback.shotsAway,
-    identificationStatus: m.identificationStatus ?? (m.analysis ? 'confirmed' : 'pending'),
-    analysis: m.analysis?.map((item) => ({
-      ...item,
-      stats: {
-        ...item.stats,
-        dispossessed: typeof item.stats.dispossessed === 'number' ? item.stats.dispossessed : 0,
-      },
-    })),
+    opponentName: m.opponentName?.trim() || '对手',
+    identificationStatus: m.identificationStatus ?? 'pending',
   }
 }
 
 function fallbackTeam(): TeamProfile {
-  const latest = readMatches().sort((a, b) => b.createdAt - a.createdAt)[0]
-  const members: TeamMember[] = (latest?.players ?? []).map((player) => ({
-    id: `tm_${player.id}`,
-    name: player.name,
-    commonNumber: player.number,
-    preferredPosition: player.position,
-    createdAt: latest?.createdAt ?? Date.now(),
-  }))
   return {
     id: 'team_primary',
-    name: latest?.teamName || '我的球队',
-    members,
+    name: '我的球队',
+    members: [],
     updatedAt: Date.now(),
   }
 }
@@ -88,57 +56,14 @@ export function saveTeamProfile(team: TeamProfile): void {
   }
 }
 
-function readMatches(): Match[] {
-  try {
-    const raw = localStorage.getItem(MATCHES_KEY)
-    if (!raw) return []
-    const parsed = JSON.parse(raw)
-    if (!Array.isArray(parsed)) return []
-    return (parsed as Match[]).map(normalizeMatch)
-  } catch {
-    return []
-  }
-}
-
-function writeMatches(matches: Match[]): void {
-  try {
-    localStorage.setItem(MATCHES_KEY, JSON.stringify(matches))
-  } catch {
-    // 存储已满或被禁用时静默降级，不影响当前会话
-  }
-}
-
-export function listMatches(): Match[] {
-  return readMatches().sort((a, b) => b.createdAt - a.createdAt)
-}
-
-export function getMatch(id: string): Match | undefined {
-  return readMatches().find((m) => m.id === id)
-}
-
+/** 保存/更新当前这一次的记录（覆盖式，不累积历史）。 */
 export function saveMatch(match: Match): void {
-  const matches = readMatches()
-  const idx = matches.findIndex((m) => m.id === match.id)
-  if (idx >= 0) {
-    matches[idx] = normalizeMatch(match)
-  } else {
-    matches.push(normalizeMatch(match))
-  }
-  writeMatches(matches)
+  currentMatch = normalizeMatch(match)
 }
 
-export function deleteMatch(id: string): void {
-  writeMatches(readMatches().filter((m) => m.id !== id))
-}
-
-/** 保存分析结果到对应比赛 */
-export function saveAnalysis(matchId: string, analysis: PlayerAnalysis[]): Match | undefined {
-  const matches = readMatches()
-  const match = matches.find((m) => m.id === matchId)
-  if (!match) return undefined
-  match.analysis = analysis
-  writeMatches(matches)
-  return match
+/** 读取当前这一次的记录；id 不匹配或页面已刷新则返回 undefined。 */
+export function getMatch(id: string): Match | undefined {
+  return currentMatch?.id === id ? currentMatch : undefined
 }
 
 export function newId(prefix = 'id'): string {

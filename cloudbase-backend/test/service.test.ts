@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { main } from "../index";
+import { main, createHandler } from "../index";
+import { requireWorker } from "../src/auth";
+import { RcRepository } from "../src/rc-repository";
 import { requireUser } from "../src/auth";
 import { loadConfig, loadTencentCredentials } from "../src/config";
 import type { Config } from "../src/config";
@@ -11,6 +13,8 @@ import { publicTask } from "../src/http-contract";
 import { corsHeaders, DEFAULT_WEB_ORIGIN, parseAllowedWebOrigins, requireAllowedOrigin, requireAllowedPreflight } from "../src/http-cors";
 import { ApiError } from "../src/types";
 import type { TaskRecord, UploadRecord } from "../src/types";
+
+const dispatchModule: typeof import('../src/dispatch') = require('../src/dispatch');
 
 class FakeObjects implements ObjectStore {
   metadata = new Map<string, ObjectMetadata>();
@@ -33,7 +37,11 @@ class MemoryRepository implements TaskRepository {
     const existing = this.tasks.get(task._id); if (existing) return existing;
     this.tasks.set(task._id, task); return task;
   }
-  async createInstantTask(task: TaskRecord) { this.tasks.set(task._id, task); return task; }
+  async createInstantTask(task: TaskRecord) {
+    const existing = this.tasks.get(task._id);
+    if (existing) return { task: existing, created: false };
+    this.tasks.set(task._id, task); return { task, created: true };
+  }
   async saveInstantResult(id: string, patch: Partial<TaskRecord>, now: Date) {
     const task = this.tasks.get(id); if (!task) throw new ApiError(404, "TASK_NOT_FOUND", "missing");
     Object.assign(task, patch, { updated_at: now });
@@ -64,8 +72,174 @@ const config: Config = {
   uploadUrlSeconds: 600, pendingUploadSeconds: 86400, rawRetentionDays: 7, 
   maxUploadBytes: 300 * 1024 * 1024, maxDurationSeconds: 900,
   allowTestIdentity: true, allowedWebOrigins: [DEFAULT_WEB_ORIGIN],
-  vlmProvider: "qwen", vlmModel: "qwen-vl-plus", queuedTtlSeconds: 1800, cdnBase: undefined
+  vlmProvider: "qwen", vlmModel: "qwen-vl-plus", queuedTtlSeconds: 1800, cdnBase: undefined, resultUrlSeconds: 300
 };
+
+async function readyUpload(now = () => new Date('2026-09-12T00:00:00Z')) {
+  const repo = new MemoryRepository(); const objects = new FakeObjects();
+  const api = new TaskService(repo, objects, config, now);
+  const ticket = await api.issueUpload('u1', { filename: 'test.webm', content_type: 'video/webm', size_bytes: 123, duration_seconds: 30 });
+  objects.metadata.set(repo.uploads.get(ticket.upload_id)!.input_object_key, { sizeBytes: 123, etag: 'test' });
+  return { repo, objects, api, ticket };
+}
+
+test('queued RC polling dispatches after 60s, respects owner/status, and keeps TTL', async t => {
+  let now = new Date('2026-09-12T00:00:00Z');
+  const { api, ticket, repo } = await readyUpload(() => now);
+  const dispatch = t.mock.method(dispatchModule, 'dispatchAnalysis', async () => 'offline');
+  const { task } = await api.createInstantJob('u1', ticket.upload_id);
+  assert.equal(dispatch.mock.callCount(), 0, 'new creation is dispatched only by the entry');
+  for (const seconds of [0, 59, 60]) {
+    now = new Date(task.created_at.getTime() + seconds * 1000);
+    await api.taskForUser('u1', task._id);
+  }
+  assert.equal(dispatch.mock.callCount(), 0);
+  now = new Date(task.created_at.getTime() + 61_000);
+  await assert.rejects(api.taskForUser('other', task._id), /任务不存在/);
+  assert.equal(dispatch.mock.callCount(), 0);
+  assert.equal((await api.taskForUser('u1', task._id)).status, 'queued');
+  assert.deepEqual(dispatch.mock.calls[0].arguments, [task._id]);
+  assert.equal(dispatch.mock.callCount(), 1);
+  for (const status of ['running', 'succeeded', 'failed'] as const) {
+    repo.tasks.set(task._id, { ...task, status });
+    await api.taskForUser('u1', task._id);
+  }
+  assert.equal(dispatch.mock.callCount(), 1);
+  repo.tasks.set(task._id, { ...task, status: 'queued' });
+  now = new Date(task.created_at.getTime() + config.queuedTtlSeconds * 1000);
+  assert.equal((await api.taskForUser('u1', task._id)).error?.code, 'STALE_QUEUED');
+  assert.equal(dispatch.mock.callCount(), 1);
+});
+
+test('polling dispatch failure is swallowed and a later poll retries', async t => {
+  let now = new Date('2026-09-12T00:00:00Z');
+  const { api, ticket } = await readyUpload(() => now);
+  const dispatch = t.mock.method(dispatchModule, 'dispatchAnalysis', async () => { throw Error('offline failure'); });
+  const { task } = await api.createInstantJob('u1', ticket.upload_id);
+  now = new Date(now.getTime() + 61_000);
+  const handler = createHandler({ service: api });
+  for (let i = 0; i < 2; i++) {
+    const response = await handler({ __http: true, method: 'GET', path: `/api/v1/instant-analysis/${task._id}` }, { auth: { uid: 'u1' } });
+    assert.equal(response.statusCode, 200);
+    assert.equal(JSON.parse(response.body).status, 'queued');
+  }
+  assert.equal(dispatch.mock.callCount(), 2);
+});
+
+test('existing queued creation re-dispatches after 60s and always keeps created false', async t => {
+  let now = new Date('2026-09-12T00:00:00Z');
+  const { api, ticket, repo } = await readyUpload(() => now);
+  let fail = false;
+  const dispatch = t.mock.method(dispatchModule, 'dispatchAnalysis', async () => { if (fail) throw Error('offline failure'); return 'offline'; });
+  const { task } = await api.createInstantJob('u1', ticket.upload_id);
+  now = new Date(task.created_at.getTime() + 60_000);
+  assert.equal((await api.createInstantJob('u1', ticket.upload_id)).created, false);
+  assert.equal(dispatch.mock.callCount(), 0);
+  now = new Date(task.created_at.getTime() + 61_000);
+  for (const shouldFail of [false, true]) {
+    fail = shouldFail;
+    const result = await api.createInstantJob('u1', ticket.upload_id);
+    assert.equal(result.created, false); assert.equal(result.task._id, task._id);
+  }
+  assert.equal(dispatch.mock.callCount(), 2);
+  for (const status of ['running', 'succeeded', 'failed'] as const) {
+    repo.tasks.set(task._id, { ...task, status });
+    assert.equal((await api.createInstantJob('u1', ticket.upload_id)).created, false);
+  }
+  assert.equal(dispatch.mock.callCount(), 2);
+});
+
+test('demo model and demo text are blocked before polling dispatch without mutating storage', async t => {
+  const { api, ticket, repo } = await readyUpload();
+  const dispatch = t.mock.method(dispatchModule, 'dispatchAnalysis', async () => 'offline');
+  const { task } = await api.createInstantJob('u1', ticket.upload_id);
+  for (const text_result of [{ model: 'demo', content: '8.1' }, { model: 'qwen', content: '演示数据：8.1' }]) {
+    const stored: TaskRecord = { ...task, created_at: new Date(task.created_at.getTime() - 61_000), text_result };
+    repo.tasks.set(task._id, stored);
+    const result = await api.taskForUser('u1', task._id);
+    assert.equal(result.error?.code, 'LEGACY_DEMO_RESULT');
+    assert.equal(result.status, 'failed'); assert.equal(result.text_result, undefined);
+    assert.equal(stored.text_result, text_result);
+  }
+  assert.equal(dispatch.mock.callCount(), 0);
+});
+
+test('unfinished pre-RC instant tasks are rejected while terminal history stays readable', async t => {
+  const { api, ticket, repo } = await readyUpload();
+  const dispatch = t.mock.method(dispatchModule, 'dispatchAnalysis', async () => 'offline');
+  const { task } = await api.createInstantJob('u1', ticket.upload_id);
+  const legacyId = `instant_${ticket.upload_id}`;
+  for (const status of ['queued', 'running', 'succeeded', 'failed'] as const) {
+    repo.tasks.set(legacyId, { ...task, _id: legacyId, status });
+    const result = await api.taskForUser('u1', legacyId);
+    if (status === 'queued' || status === 'running') assert.equal(result.error?.code, 'LEGACY_TASK_REANALYSIS_REQUIRED');
+    else { assert.equal(result.status, status); assert.equal(result.error, undefined); }
+  }
+  assert.equal(dispatch.mock.callCount(), 0);
+});
+
+test('RC identity is idempotent and separates mode, context and explicit reanalysis', async () => {
+  const { api, ticket } = await readyUpload();
+  const first = await api.createInstantJob('u1', ticket.upload_id, undefined, { team_name: ' red ' });
+  const same = await api.createInstantJob('u1', ticket.upload_id, undefined, { team_name: 'red' });
+  assert.match(first.task._id, /^rc_[a-f0-9]{64}$/);
+  assert.equal(first.task.upload_id, ticket.upload_id);
+  assert.equal(first.created, true); assert.equal(same.created, false);
+  assert.equal(first.task._id, same.task._id);
+  const personal = await api.createInstantJob('u1', ticket.upload_id, undefined, { analysis_mode: 'personal_match', target_description: 'red 10' });
+  assert.notEqual(first.task._id, personal.task._id);
+  const retry = await api.createInstantJob('u1', ticket.upload_id, undefined, { team_name: 'red' }, { reanalysisKey: 'retry_1234567890123456' });
+  assert.notEqual(first.task._id, retry.task._id);
+});
+
+test('SDK envelope keeps POST, dispatches exactly once, and failed dispatch returns 202', async () => {
+  const { api, ticket, repo } = await readyUpload(); let calls = 0;
+  const handler = createHandler({ service: api, dispatch: async () => { calls++; throw Error('offline dispatch'); } });
+  const event = { __http: true, method: 'POST', path: '/api/v1/instant-analysis', body: { upload_id: ticket.upload_id, analysis_context: { analysis_mode: 'personal_match', target_description: 'red 10' } } };
+  const context = { auth: { uid: 'u1' } };
+  const first = await handler(event, context);
+  assert.equal(first.statusCode, 202);
+  const body = JSON.parse(first.body);
+  assert.equal(body.warning.code, 'DISPATCH_PENDING');
+  assert.equal(repo.tasks.get(body.job_id)!.analysis_context!.target_description, 'red 10');
+  assert.equal((await handler(event, context)).statusCode, 202);
+  assert.equal(calls, 1);
+  const read = await handler({ __http: true, method: 'GET', path: `/api/v1/instant-analysis/${body.job_id}` }, context);
+  assert.equal(read.statusCode, 200); assert.equal(calls, 1);
+  assert.equal((await handler({ __http: true, method: 'POST', path: event.path, body: '{' }, context)).statusCode, 400);
+});
+
+test('worker authorization requires both token and expected environment', () => {
+  assert.throws(() => requireWorker({ headers: {} }, 'secret', 'test'), /invalid worker identity/);
+  assert.throws(() => requireWorker({ headers: { authorization: 'Bearer secret' } }, 'secret', 'test'), /environment/);
+  assert.doesNotThrow(() => requireWorker({ headers: { authorization: 'Bearer secret', 'x-cloudbase-env': 'test' } }, 'secret', 'test'));
+});
+
+test('RC repository uses RC keys for lookup, references, TTL and deletion', async () => {
+  const { api, ticket } = await readyUpload();
+  const { task } = await api.createInstantJob('u1', ticket.upload_id);
+  const records = new Map<string, TaskRecord>([[`db/rc_task/${task._id}.json`, task]]);
+  const removed: string[] = [];
+  const store = {
+    getJson: async (key: string) => records.has(key) ? { data: records.get(key) } : null,
+    listKeys: async (prefix: string) => [...records.keys()].filter(k => k.startsWith(prefix)),
+    deleteObject: async (key: string) => { removed.push(key); records.delete(key); }
+  };
+  const repository = new RcRepository(store as any);
+  repository.rc = () => ({
+    get: async (id: string) => records.get(`db/rc_task/${id}.json`) || null,
+    mutate: async (id: string, fn: any) => { const r = fn(records.get(`db/rc_task/${id}.json`)); if(r.value) records.set(`db/rc_task/${id}.json`, r.value); return r.result; }
+  });
+  const previous = process.env.TASK_STORAGE; process.env.TASK_STORAGE = 'cos-cas';
+  try {
+    assert.equal((await repository.getTask(task._id))!._id, task._id);
+    assert.equal((await repository.findTasksByInputKey(task.input_object_key)).length, 1);
+    assert.equal((await repository.expireTaskIfStale(task._id, new Date('2026-09-12T01:00:00Z'), 1800))!.status, 'failed');
+    await assert.rejects(repository.saveInstantResult(), /fenced worker lease/);
+    await repository.deleteTask(task._id);
+    assert.deepEqual(removed, [`db/rc_task/${task._id}.json`]);
+  } finally { if(previous === undefined) delete process.env.TASK_STORAGE; else process.env.TASK_STORAGE = previous; }
+});
 
 test("CORS only reflects exact configured origins and never wildcard", () => {
   assert.deepEqual(parseAllowedWebOrigins(), [DEFAULT_WEB_ORIGIN]);
@@ -129,13 +303,12 @@ test("COS credentials prefer standard Tencent Cloud names and support legacy fal
   }), { SecretId: "legacy-id", SecretKey: "legacy-key", SecurityToken: "legacy-token" });
 });
 
-test("upload enforces size and duration boundaries and server-generates keys", async () => {
+test("upload matches online permissive media acceptance and server-generates keys", async () => {
   const repo = new MemoryRepository(); const objects = new FakeObjects();
   const api = new TaskService(repo, objects, config, () => new Date("2026-08-24T00:00:00Z"));
-  // 只校验"超限被拒"的语义，不绑定具体数字：报错文案写死 1GB / 20 分钟，
-  // 而本测试 config 用的是 300MB / 15 分钟，写死数字会让断言与产品实际限制脱节（此前一直误报失败）。
-  await assert.rejects(api.issueUpload("u1", { filename: "a.mp4", content_type: "video/mp4", size_bytes: config.maxUploadBytes + 1, duration_seconds: 10 }), /视频不得超过/);
-  await assert.rejects(api.issueUpload("u1", { filename: "a.mp4", content_type: "video/mp4", size_bytes: 100, duration_seconds: 901 }), /视频不得超过/);
+  const large = await api.issueUpload("u1", { filename: "a.webm", content_type: "application/octet-stream", size_bytes: config.maxUploadBytes + 1, duration_seconds: 901 });
+  assert.match(large.upload_url, /source\.webm/);
+  await assert.rejects(api.issueUpload("u1", { size_bytes: 0, duration_seconds: 10 }), /必须为正数/);
   const ticket = await api.issueUpload("u1", { filename: "../../unsafe.MOV", content_type: "video/quicktime", size_bytes: config.maxUploadBytes, duration_seconds: 900 });
   assert.equal(ticket.method, "PUT");
   assert.deepEqual(ticket.headers, {});
@@ -153,8 +326,8 @@ test("deleting a task frees its video only when no sibling task still references
   objects.metadata.set(inputKey, { sizeBytes: 1234, etag: "raw-etag" });
   // 团队任务由 VLM 入口创建；个人任务目前还没有 service 入口（第三步开发），
   // 这里直接落库一个同视频的个人任务，用来验证"还有兄弟任务时不能回收视频"。
-  const instantTask = await api.createInstantJob("u1", uploadId);
-  const personalTask = await repo.createInstantTask({
+  const { task: instantTask } = await api.createInstantJob("u1", uploadId);
+  const { task: personalTask } = await repo.createInstantTask({
     ...(await repo.getTask(instantTask._id))!, _id: uploadId, mode: "single",
   });
 
@@ -180,7 +353,7 @@ test("queued tasks never claimed are failed after the TTL instead of looping for
   const ticket = await api.issueUpload("u1", { filename: "stale.mp4", content_type: "video/mp4", size_bytes: 1234, duration_seconds: 20 });
   const uploadId = ticket.upload_id;
   objects.metadata.set(repo.uploads.get(uploadId)!.input_object_key, { sizeBytes: 1234, etag: "raw-etag" });
-  const created = await api.createInstantJob("u1", uploadId);
+  const { task: created } = await api.createInstantJob("u1", uploadId);
 
   // 刚入队：未超时应保持 queued，不能被误判
   const fresh = await api.taskForUser("u1", created._id);

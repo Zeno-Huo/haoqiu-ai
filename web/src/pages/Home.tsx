@@ -1,7 +1,5 @@
 import { useEffect, useRef } from 'react'
 import { Link } from 'react-router-dom'
-import { listMatches } from '../lib/storage'
-import type { Match } from '../types'
 
 type Dot = {
   x: number
@@ -215,32 +213,21 @@ function ParticleSphere() {
   return <canvas ref={canvasRef} className="particle-sphere-canvas" aria-hidden="true" />
 }
 
-/** 右上角入口：点击直接进 /history 二级页面（不做下拉展开）。 */
-function Recent({ matches }: { matches: Match[] }) {
-  return (
-    <Link to="/history" className="home-recent">
-      <span>往期分析</span>
-      <b>{matches.length > 0 ? `${matches.length} 场` : '查看'}</b>
-      <i aria-hidden="true">→</i>
-    </Link>
-  )
-}
-
 export default function Home() {
   const modes = [
     {
       index: '01',
-      label: '比赛分析',
+      label: '团队模式',
       kicker: '看球队',
       note: '快速总结，辅助决策',
-      features: ['战术分析', '数据统计', '关键事件'],
+      features: ['亮点与不足', '关键片段', '球员点评'],
       action: '上传视频，即刻分析',
       mode: 'instant',
       primary: true,
     },
     {
       index: '02',
-      label: '个人分析',
+      label: '个人模式',
       kicker: '看自己',
       note: 'AI动作追踪，深度分析，时间较长',
       features: ['表现评分', '跑动热图', '技术统计'],
@@ -289,7 +276,6 @@ export default function Home() {
             </Link>
           ))}
         </nav>
-        <Recent matches={listMatches()} />
       </main>
       <footer className="home-footer">zeno有限公司出品</footer>
     </div>

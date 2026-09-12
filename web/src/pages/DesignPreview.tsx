@@ -1,0 +1,9 @@
+import {useState} from 'react'
+import InstantDashboard from '../components/InstantDashboard'
+import AnalysisLoading from '../components/AnalysisLoading'
+import {Link} from 'react-router-dom'
+import type {InstantAnalysisDashboard} from '../lib/instantAnalysis'
+const base={tags:[],isMvp:false,stats:{},insights:[],events:[]}
+const team:InstantAnalysisDashboard={scoreSource:'unknown',teamAverage:8.1,summary:{overall:'中场衔接流畅，回防需要提速',highlight:'配合连贯，推进更有层次。',weakness:'丢球后回撤偏慢。',recommendation:'优先保持中场与后卫的距离。'},teamStats:{},events:[],players:[{...base,id:'18',number:'18',role:'组织核心',score:8.6,isMvp:true,strength:'短传串联有效，出球稳定。'},{...base,id:'70',number:'70',role:'边路快马',score:8.2,strength:'前插积极，拉开进攻空间。'},{...base,id:'99',number:'99',role:'中场接应',score:8.0,strength:'接应及时，配合较为默契。'}]}
+const personal:InstantAnalysisDashboard={...team,summary:{overall:'前插积极，回防时机仍需改善',recommendation:'丢球后先回位，再寻找反抢机会。'},players:[{...base,id:'10',number:'10',score:8.4,isMvp:true,ratings:{participation:8.8,attack:8,defense:7.2,decision:8.2},strength:'无球前插积极，能主动创造接球空间。',weakness:'丢球后回撤偏晚，身后保护不足。',tags:['前插积极','接应主动','敢于尝试']}]}
+export default function DesignPreview(){const[mode,setMode]=useState<'team'|'personal'|'loading'>('team');const[empty,setEmpty]=useState(false);return <><nav className="vr-preview-controls">{(['team','personal','loading'] as const).map(m=><button key={m} aria-pressed={mode===m} onClick={()=>setMode(m)}>{m==='team'?'球队':m==='personal'?'个人':'加载'}</button>)}<button aria-pressed={empty} onClick={()=>setEmpty(!empty)}>缺数据 / 错误</button><Link to="/match/new?mode=instant">上传页</Link></nav>{mode==='loading'?<AnalysisLoading filename="设计预览 · 周末比赛.mp4" progress={42} stage="正在梳理比赛表现" error={empty?'示例：暂时无法获取进度':undefined} onRetry={()=>setEmpty(false)}/>:<InstantDashboard key={`${mode}-${empty}`} mode={mode} dashboard={empty?{scoreSource:'unknown',summary:{},players:[],events:[],teamStats:{}}:mode==='team'?team:personal} preview/>}</>}

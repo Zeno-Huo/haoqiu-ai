@@ -16,6 +16,8 @@ export interface Config {
   vlmModel: string;
   cdnBase?: string;
   queuedTtlSeconds: number;
+  workerToken?: string;
+  resultUrlSeconds: number;
 }
 
 export const loadTencentCredentials = (env: NodeJS.ProcessEnv = process.env) => ({
@@ -53,5 +55,7 @@ export const loadConfig = (): Config => ({
   cdnBase: (process.env.COS_CDN_BASE || process.env.CDN_BASE || "").trim().replace(/\/$/, "") || undefined,
   // 排队任务超时：VLM 云函数若迟迟没处理完、或异常退出没回写结果，任务会永远停在 queued，
   // 前端会一直轮询它们。超过这个时长就判为失败，终止无效轮询与随之而来的 COS 请求费。
-  queuedTtlSeconds: integer("QUEUED_TTL_SECONDS", 1800)
+  queuedTtlSeconds: integer("QUEUED_TTL_SECONDS", 1800),
+  workerToken: process.env.WORKER_API_TOKEN,
+  resultUrlSeconds: Math.min(integer("RESULT_URL_SECONDS", 300), 900)
 });

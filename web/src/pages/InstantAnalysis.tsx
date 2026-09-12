@@ -1,3 +1,4 @@
+import AnalysisLoading from '../components/AnalysisLoading'
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import type { CloudDetectionJob } from '../cloudDetectionTypes'
@@ -13,7 +14,7 @@ async function createWorkflow(matchId: string, file: File | undefined, listener:
   if (!match) throw new Error('找不到这段视频')
   const uploadId = await ensureUploadedVideo(matchId, file, listener)
   const context = match.ourTeamContext
-  const job = await createInstantAnalysisJob(uploadId, matchId, context ? { team_name: context.teamName, jersey_hint: context.jerseyHint, opening_frame_point: context.openingFramePoint } : undefined)
+  const job = await createInstantAnalysisJob(uploadId, matchId, { analysis_mode: 'team', ...(context ? { team_name: context.teamName, jersey_hint: context.jerseyHint, opening_frame_point: context.openingFramePoint } : {}) })
   saveMatch({ ...match, cloudUploadId: uploadId, instantJobId: job.job_id, instantAnalysisJob: job })
   return job
 }
@@ -67,21 +68,16 @@ export default function InstantAnalysis() {
     return () => { cancelled = true; if (timer) window.clearTimeout(timer) }
   }, [configured, initialMatch, retryNonce])
 
-  if (!initialMatch) return <div className="page-shell grid place-items-center px-4"><Link className="btn-primary" to="/">返回首页</Link></div>
+  if (!initialMatch) return <div className="page-shell grid place-items-center px-4"><section className="panel max-w-md p-6 text-center"><p className="text-[var(--text-secondary)]">这段视频只保留在当前页面，刷新或重新打开后需要再次上传。</p><Link className="btn-primary mt-5" to="/match/new?mode=instant">重新上传视频</Link></section></div>
   const success = job?.status === 'succeeded'
   const failed = job?.status === 'failed'
   const parsed = job ? parseInstantAnalysis(job) : {}
   const progress = job ? Math.min(100, Math.max(0, job.progress)) : uploadProgress
   const stage = !job ? (phase === 'uploading' ? '正在上传视频' : '正在准备视频') : job.status === 'queued' ? '正在等待分析' : '正在生成结果'
 
-  return <div className="page-shell px-4 py-8"><div className="mx-auto max-w-3xl">
-    <header className="analysis-header"><Link to="/">← 首页</Link><h1>{success ? '分析完成' : failed ? '分析未完成' : '正在看这场球'}</h1><p>{initialMatch.videoName}</p></header>
-    {!configured ? <section className="panel p-6"><h2>分析暂时不可用</h2><Link className="btn-primary mt-5" to="/match/new?mode=instant">重新开始</Link></section> : <>
-      {!success && !failed && <section className="analysis-progress"><div><i style={{ width: `${progress}%` }} /></div><p><span>{stage}</span><b>{progress}%</b></p></section>}
-      {message && <section className="analysis-error"><p>{message}</p><button className="btn-secondary" onClick={() => setRetryNonce((value) => value + 1)}>再试一次</button></section>}
-      {failed && <section className="analysis-error"><p>{job?.error?.message || '这次分析没有完成'}</p><Link className="btn-primary" to="/match/new?mode=instant">重新选择视频</Link></section>}
-      {success && (parsed.dashboard ? <InstantDashboard dashboard={parsed.dashboard} matchId={initialMatch.id} /> : parsed.narrative ? <Narrative content={parsed.narrative} /> : <section className="panel p-6"><h2>结果正在整理</h2></section>)}
-      {success && <div className="analysis-actions"><button className="btn-secondary" type="button" onClick={() => void (navigator.share ? navigator.share({ title: '好球 Ai 比赛战报', text: parsed.narrative || '我的比赛战报已经完成', url: location.href }) : navigator.clipboard.writeText(location.href))}>分享战报</button><Link className="btn-primary" to="/match/new?mode=instant">再分析一段</Link></div>}
-    </>}
-  </div></div>
+  if (success && parsed.dashboard) return <InstantDashboard dashboard={parsed.dashboard} matchId={initialMatch.id} mode="team" />
+
+  if (!success) return <AnalysisLoading filename={initialMatch.videoName || '比赛视频'} progress={progress} stage={!job ? stage : job.status === 'queued' ? '正在等待分析' : '正在梳理比赛表现'} uploading={!job} error={!configured?'分析服务暂时不可用':failed?job?.error?.message || '这次分析没有完成':message || undefined} onRetry={message?()=>setRetryNonce(n=>n+1):undefined}/>
+
+  return <main className="vr-page"><header className="vr-nav"><Link to="/">返回</Link><h1>比赛复盘</h1><span/></header>{parsed.narrative?<Narrative content={parsed.narrative}/>:<p className="vr-empty">本次报告暂时无法展示</p>}<Link className="vr-primary" to="/match/new?mode=instant">重新选择视频</Link></main>
 }

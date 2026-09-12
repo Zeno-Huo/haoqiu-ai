@@ -7,11 +7,13 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "node --test dist/test/*.test.js",
-    "check": "npm run build && npm test"
+    "check": "npm run build && npm test",
+    "package:api": "node scripts/package-api.mjs"
   },
   "dependencies": {
     "@cloudbase/node-sdk": "^3.10.0",
-    "cos-nodejs-sdk-v5": "^2.14.7"
+    "cos-nodejs-sdk-v5": "^2.14.7",
+    "tencentcloud-sdk-nodejs-scf": "^4.1.168"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",

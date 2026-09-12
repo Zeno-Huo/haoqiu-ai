@@ -1,8 +1,9 @@
+import { dispatchAnalysis } from "./src/dispatch";
 import cloudbase from "@cloudbase/node-sdk";
-import { cloudbaseContextUserId, normalizeHeaders, requireUser, userIdFromBearer } from "./src/auth";
+import { cloudbaseContextUserId, normalizeHeaders, requireWorker, requireUser, userIdFromBearer } from "./src/auth";
 import { loadConfig, loadTencentCredentials } from "./src/config";
 import { TencentCosStore } from "./src/cos";
-import { CosRepository } from "./src/cos-repository";
+import { RcRepository } from "./src/rc-repository";
 import { TaskService } from "./src/service";
 import { ApiError } from "./src/types";
 import type { TaskRecord } from "./src/types";
@@ -25,10 +26,11 @@ const getCloudApp = (): ReturnType<typeof cloudbase.init> => {
   return appInstance;
 };
 const getService = (): TaskService => {
+  if (!config.envId || !config.bucket) throw new ApiError(503, "CONFIGURATION_ERROR", "CloudBase 环境和 COS Bucket 必须显式配置");
   if (!service) {
     const store = new TencentCosStore(config.bucket, config.region, config.cdnBase);
     // 该体验版环境没有文档库，改为 COS JSON 文件存储。单用户短生命周期任务用不上事务/复杂查询。
-    service = new TaskService(new CosRepository(store), store, config);
+    service = new TaskService(new RcRepository(store), store, config);
   }
   return service;
 };
@@ -62,7 +64,26 @@ const parseBody = (event: any): any => {
   try { return JSON.parse(raw); } catch { throw new ApiError(400, "INVALID_JSON", "请求体必须是 JSON"); }
 };
 
-export const main = async (event: any, context: any) => {
+const normalizeCallEvent = (event: any): any => {
+  if (!event || typeof event !== "object") return event;
+  // Check the envelope first: it carries its own path/body fields, so probing for
+  // HTTP event shapes first would silently rewrite every call into a GET.
+  if (event.__http === true) {
+    const headers: Record<string, string> = { ...(event.headers || {}) };
+    if (event.origin) headers.origin = event.origin;
+    return {
+      httpMethod: String(event.method || "GET").toUpperCase(),
+      path: String(event.path || "/"),
+      headers,
+      body: event.body === undefined ? undefined : typeof event.body === "string" ? event.body : JSON.stringify(event.body),
+      isBase64Encoded: false
+    };
+  }
+  return event;
+};
+
+export const createHandler = (overrides?: { service?: TaskService; dispatch?: typeof dispatchAnalysis; recover?: (limit: number) => Promise<string[]> }) => async (rawEvent: any, context: any) => {
+  const event = normalizeCallEvent(rawEvent);
   try {
     const method = String(event.httpMethod || event.requestContext?.http?.method || "GET").toUpperCase();
     const route = String(event.path || event.rawPath || "/").replace(/\/+$/, "") || "/";
@@ -77,7 +98,7 @@ export const main = async (event: any, context: any) => {
     }
     const body = parseBody(event);
     if (method === "GET" && route === "/health") {
-      const diag: any = { status: "ok", ts: new Date().toISOString(), storage: "cos-json" };
+      const diag: any = { status: "ok", ts: new Date().toISOString(), storage: process.env.TASK_STORAGE || "unset" };
       const creds = loadTencentCredentials();
       diag.cos = {
         secretIdConfigured: Boolean(creds.SecretId),
@@ -107,6 +128,13 @@ export const main = async (event: any, context: any) => {
         diag.db = { mode: "cos-json", initialized: false, error: e instanceof Error ? e.message : String(e) };
       }
       try {
+        const { configuredStore } = require("../haoqiu-vlm/task-store");
+        await configuredStore().get("rc_health_probe_missing");
+        diag.taskStore = { mode: process.env.TASK_STORAGE || "unset", readable: true };
+      } catch (error) {
+        diag.taskStore = { mode: process.env.TASK_STORAGE || "unset", readable: false, error: (error as any)?.code || 'TASK_STORAGE_UNAVAILABLE' };
+      }
+      try {
         getService();
         diag.service = { built: true };
       } catch (e) {
@@ -115,7 +143,8 @@ export const main = async (event: any, context: any) => {
       diag.lastUnhandled = lastUnhandled;
       return respond(200, diag);
     }
-    const api = getService();
+    if (route.startsWith("/worker/") || route.startsWith("/v1/worker/")) requireWorker(event, config.workerToken, config.envId);
+    const api = overrides?.service || getService();
 
     if (method === "POST" && ["/api/v1/cos-upload-tickets", "/api/v1/uploads/ticket"].includes(route)) {
       return respond(201, await api.issueUpload(currentUser(event, context), body));
@@ -145,24 +174,42 @@ export const main = async (event: any, context: any) => {
     if (method === "DELETE" && match) {
       return respond(200, await api.deleteTaskForUser(currentUser(event, context), decodeURIComponent(match[1])));
     }
+    match = route.match(/^\/api\/v1\/instant-analysis\/([^/]+)\/evidence\/([^/]+)$/);
+    if (method === "GET" && match) return respond(200, await api.evidenceUrl(currentUser(event, context), decodeURIComponent(match[1]), decodeURIComponent(match[2])));
+    match = route.match(/^\/api\/v1\/instant-analysis\/([^/]+)\/source-video$/);
+    if (method === "GET" && match) return respond(200, await api.sourceVideoUrl(currentUser(event, context), decodeURIComponent(match[1])));
+    if (method === "POST" && route === "/worker/v1/instant/recover") {
+      if (!overrides && !process.env.VLM_WORKER_TOKEN) throw new ApiError(503, "CONFIGURATION_ERROR", "VLM worker authentication is not configured");
+      const { configuredStore } = require("../haoqiu-vlm/task-store");
+      const ids: string[] = await (overrides?.recover || ((limit: number) => configuredStore().recover(limit)))(1);
+      await Promise.all(ids.map(id => (overrides?.dispatch || dispatchAnalysis)(id)));
+      return respond(200, {ok:true,recovered:ids.length});
+    }
     if (method === "POST" && route === "/api/v1/instant-analysis") {
+      if (!overrides && !process.env.VLM_WORKER_TOKEN) throw new ApiError(503, "CONFIGURATION_ERROR", "VLM worker authentication is not configured");
       if (!body.upload_id) throw new ApiError(400, "INVALID_INPUT", "upload_id 为必填项");
       const rawContext = body.analysis_context && typeof body.analysis_context === "object" ? body.analysis_context : undefined;
       const point = rawContext && rawContext.opening_frame_point && typeof rawContext.opening_frame_point === "object" ? rawContext.opening_frame_point : undefined;
       const analysisContext = rawContext ? {
+        analysis_mode: ["personal_match", "personal_training"].includes(rawContext.analysis_mode) ? rawContext.analysis_mode : "team",
         team_name: typeof rawContext.team_name === "string" ? rawContext.team_name.slice(0, 80) : undefined,
         jersey_hint: typeof rawContext.jersey_hint === "string" ? rawContext.jersey_hint.slice(0, 160) : undefined,
+        target_description: typeof rawContext.target_description === "string" ? rawContext.target_description.slice(0, 160) : undefined,
+        target_number: typeof rawContext.target_number === "string" ? rawContext.target_number.slice(0, 20) : undefined,
+        target_nickname: typeof rawContext.target_nickname === "string" ? rawContext.target_nickname.slice(0, 40) : undefined,
         opening_frame_point: point && Number.isFinite(point.x) && Number.isFinite(point.y) && point.x >= 0 && point.x <= 1 && point.y >= 0 && point.y <= 1 ? { x: point.x, y: point.y } : undefined
       } : undefined;
-      const task = await api.createInstantJob(
+      const { task, created } = await api.createInstantJob(
         currentUser(event, context),
         String(body.upload_id),
         body.client_match_id ? String(body.client_match_id) : undefined,
-        analysisContext
+        analysisContext,
+        { contextVersion: body.context_version, reanalysisKey: body.reanalysis_key }
       );
-      getCloudApp()
-        .callFunction({ name: "haoqiu-vlm", data: { taskId: task._id, envId: config.envId } })
-        .catch((err) => console.error("haoqiu-vlm trigger failed", err instanceof Error ? err.message : err));
+      if (created) {
+        try { await (overrides?.dispatch || dispatchAnalysis)(task._id); }
+        catch { return respond(202, {...publicTask(task), warning: {code:"DISPATCH_PENDING",message:"任务已保存，等待恢复调度"}}); }
+      }
       return respond(202, publicTask(task));
     }
 
@@ -170,7 +217,11 @@ export const main = async (event: any, context: any) => {
   } catch (error) {
     const origin = normalizeHeaders(event?.headers).origin || undefined;
     if (error instanceof ApiError) return json(error.status, { error: { code: error.code, message: error.message } }, origin);
+    if ((error as any)?.code === "TASK_STORAGE_UNAVAILABLE") return json(503, { error: { code: "TASK_STORAGE_UNAVAILABLE", message: "任务存储暂时不可用，状态未更新" } }, origin);
+    if ((error as any)?.code === "CONFIGURATION_ERROR") return json(503, { error: { code: "CONFIGURATION_ERROR", message: "事务任务存储尚未配置" } }, origin);
     console.error("request failed", error instanceof Error ? { name: error.name, message: error.message } : "unknown error");
     return json(500, { error: { code: "INTERNAL_ERROR", message: "服务暂时不可用" } }, origin);
   }
 };
+
+export const main = createHandler();

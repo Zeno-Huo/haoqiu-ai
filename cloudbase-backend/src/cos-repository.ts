@@ -13,7 +13,7 @@ const iso = (d: Date | string | undefined | null): number => (d ? new Date(d).ge
 
 /** 基于 COS 的 JSON 文件存储，替代 node-sdk 文档库（该体验版环境文档库 API 不可用）。 */
 export class CosRepository implements TaskRepository {
-  constructor(private store: TencentCosStore) {}
+  constructor(protected store: TencentCosStore) {}
 
   private async readUpload(id: string): Promise<UploadRecord | null> {
     const r = await this.store.getJson<UploadRecord>(uploadKey(id));
@@ -44,9 +44,11 @@ export class CosRepository implements TaskRepository {
   async getUpload(id: string): Promise<UploadRecord | null> { return this.readUpload(id); }
   async getTask(id: string): Promise<TaskRecord | null> { return this.readTask(id); }
 
-  async createInstantTask(task: TaskRecord): Promise<TaskRecord> {
+  async createInstantTask(task: TaskRecord): Promise<{ task: TaskRecord; created: boolean }> {
+    const existing = await this.getTask(task._id);
+    if (existing) return { task: existing, created: false };
     await this.writeTask(task);
-    return task;
+    return { task, created: true };
   }
 
   async saveInstantResult(taskId: string, patch: Partial<TaskRecord>, now: Date): Promise<TaskRecord> {

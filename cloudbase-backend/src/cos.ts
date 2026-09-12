@@ -106,7 +106,7 @@ export class TencentCosStore implements ObjectStore {
         { Bucket: this.bucket, Region: this.region, Prefix: prefix, Marker: marker, MaxKeys: Math.min(max, 1000) },
         (error, data) => error ? reject(error) : resolve({
           contents: (data?.Contents || []).map((c: { Key: string }) => ({ key: c.Key })),
-          isTruncated: Boolean(data?.IsTruncated),
+          isTruncated: String(data?.IsTruncated) === 'true',
           nextMarker: data?.NextMarker as string | undefined
         })
       ));

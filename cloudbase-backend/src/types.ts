@@ -1,5 +1,5 @@
-/** 全面转向 VLM 后不再有 worker 租约中间态：排队 -> 成功 / 失败。 */
-export type TaskStatus = "queued" | "succeeded" | "failed";
+/** RC 任务兼容线上 VLM 状态与恢复租约。 */
+export type TaskStatus = "queued" | "leased" | "running" | "retry_wait" | "locating" | "analyzing" | "composing" | "succeeded" | "failed";
 
 export interface UploadRecord {
   _id: string;
@@ -18,12 +18,27 @@ export interface UploadRecord {
 }
 
 export interface TaskRecord {
+  upload_id?: string;
+  context_version?: string;
+  context_hash?: string;
+  request_key?: string;
+  attempt?: number;
+  max_attempts?: number;
+  available_at?: Date;
+  lease_expires_at?: Date;
+  output_object_key?: string;
+  result_lifecycle?: { delete_after?: Date; deleted_at?: Date };
+  evidence?: Array<{ id: string; task_id: string; upload_id: string; owner_id: string; attempt: number; timestamp: number; object_key: string; content_type: string }>;
   _id: string;
   owner_id: string;
   client_match_id?: string;
   /** 分析模式（全部由 VLM 完成）：instant = 团队比赛；single = 个人比赛。 */
   mode?: "instant" | "single";
   analysis_context?: {
+    analysis_mode?: "team" | "personal_match" | "personal_training";
+    target_description?: string;
+    target_number?: string;
+    target_nickname?: string;
     team_name?: string;
     jersey_hint?: string;
     training_item?: string;

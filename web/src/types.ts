@@ -48,7 +48,7 @@ export interface Match {
   teamName: string // 我的队名
   myScore: number // 我方进球
   oppScore: number // 对方进球
-  /** 对手名称与对比数据：当前均为本地确定性演示数据 */
+  /** 对手名称与对比数据：仅在 AI 实际识别出时才有值，缺失时界面应显示「未识别」 */
   opponentName?: string
   possessionHome?: number
   possessionAway?: number
@@ -68,8 +68,6 @@ export interface Match {
     teamName?: string
     jerseyHint?: string
     openingFramePoint?: { x: number; y: number }
-    /** 个人训练所选的训练项目（自由文本，可自定义，不框死）。 */
-    trainingItem?: string
   }
   identificationStatus?: IdentificationStatus
   /** 画面候选球员 ID -> 球队成员 ID。只有出现在此表中的身份才视为已由队长确认。 */
@@ -83,8 +81,8 @@ export interface Match {
   /** 即时分析（视觉大模型文字复盘）任务；与深度复盘任务相互独立、可并存。 */
   instantJobId?: string
   instantAnalysisJob?: CloudDetectionJob
-  /** single：个人比赛用 VLM 出文字复盘；training：个人训练用 VLM 出练习建议。 */
-  analysisMode?: 'single' | 'training'
+  /** single：个人比赛用 VLM 出文字复盘。 */
+  analysisMode?: 'single'
   trackingJobId?: string
   trackingDetectionJob?: CloudDetectionJob
   trackingCandidateId?: string

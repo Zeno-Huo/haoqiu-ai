@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useLocation } from 'react-router-dom'
 
 function Logo() {
   return (
@@ -13,16 +13,18 @@ function Logo() {
 }
 
 export default function Layout({ children }: { children: ReactNode }) {
+  const { pathname } = useLocation()
+  const isReport = pathname === "/design-preview" || pathname === "/match/new" || /^\/match\/[^/]+\/(instant|tracking|training)$/.test(pathname)
   return (
     <div className="flex min-h-screen flex-col">
-      <header className="relative z-30 bg-transparent">
+      {!isReport && <header className="relative z-30 bg-transparent">
         <div className="mx-auto flex h-14 max-w-5xl items-center justify-between px-4">
           <Link to="/" aria-label="好球Ai 首页">
             <Logo />
           </Link>
           <span aria-hidden="true" className="layout-header-spacer" />
         </div>
-      </header>
+      </header>}
 
       <main className="flex-1">{children}</main>
 
