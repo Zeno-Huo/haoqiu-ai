@@ -599,7 +599,8 @@ ${ctxPart}
       "team": "home",
       "role": "进攻尖刀",
       "score": 7.5,
-      "ratings": {"participation": 8, "attack": 8, "defense": 5, "decision": 6},
+      "dimension_analysis": {"attack": "可见进攻表现与改进建议", "passing": "可见传球表现与改进建议", "defense": "可见防守表现与改进建议", "running": "可见跑动表现与改进建议", "duels": "可见身体对抗表现与改进建议"},
+      "ratings": {"running": 8, "attack": 8, "defense": 5, "duels": 6, "passing": 7},
       "strength": "背身拿球能护住，对抗不吃亏，还能等队友前插",
       "weakness": "最后一脚出球偏急，有两次直接传给了对方",
       "notes": [
@@ -623,9 +624,11 @@ ${ctxPart}
 - anonymous_index：number 为 null 时才需要。从 1 开始按出场顺序或重要性递增的整数。有真实号码的球员此字段可省略。
 - team：固定 "home"（我方）。
 - score：本场综合评分，1~10 分（可带一位小数）。
-- ratings：四项分项评分，每项 0~10 整数：participation 参与度 / attack 进攻 / defense 防守 / decision 决策。
+- dimension_analysis：以上五个维度分别写 1~2 句具体观察与建议（每项约 30~60 字），只依据可见画面；无法评价填 null。跑动评价无球移动、接应与回撤；对抗评价护球、身体接触与重心稳定，不能沿用参与度或决策评分。
+- ratings：五项分项评分，每项 0~10 整数：running 跑动 / attack 进攻 / defense 防守 / duels 对抗 / passing 传球。
+  ★ passing 只评价可见传球的选线、时机、准确性与接应配合，不统计次数；未观察到可评价传球时该项填 null，不从综合分或其他分项推算。
   ★ 打分必须按本场实际表现拉开差距（差 3~5 / 正常 6~7 / 突出 8~9）—— 严禁所有人都给同一个分（如全给 7）。
-  ★ 分数要能对应到 notes 里写的具体动作；四项之间也要有差异（会跑位但不回防的人，参与度高、防守低）。
+  ★ 分数要能对应到 notes 里写的具体动作；五项之间也要有差异（会跑位但不回防的人，跑动高、防守低）。
   ★ 实在看不清某人的表现，score 和 ratings 填 null，不要瞎给分。
 - role：4~6 字的角色概括，从你看到的实际表现推断：组织核心 / 进攻尖刀 / 边路快马 / 后场清扫 / 全能中场 / 定位球点 / 中前场组织者 等。
   ⚠️ 不要写"前锋""中场""后卫""门将"这类笼统位置，也不要硬猜具体位置。
@@ -666,6 +669,7 @@ ${ctxPart}
   "highlights": [
     {"title": "高位逼抢见效", "detail": "开场阶段三次在前场断球成功，直接形成射门机会", "time_hint": "开场前 10 分钟"}
   ],
+  "opponent_performance": "依据画面概括对手的进攻方式、防守特点或压迫表现，1~2句；无法辨认对手时填 null",
   "weaknesses": [
     {"title": "最后一传质量差", "detail": "多次推进到禁区前沿后传球直接送到对方脚下", "time_hint": "下半场反复出现"}
   ],
@@ -799,7 +803,8 @@ ${ctxPart}
       "team": "home",
       "role": "进攻尖刀",
       "score": 7.5,
-      "ratings": {"participation": 8, "attack": 8, "defense": 5, "decision": 6},
+      "dimension_analysis": {"attack": "可见进攻表现与改进建议", "passing": "可见传球表现与改进建议", "defense": "可见防守表现与改进建议", "running": "可见跑动表现与改进建议", "duels": "可见身体对抗表现与改进建议"},
+      "ratings": {"running": 8, "attack": 8, "defense": 5, "duels": 6, "passing": 7},
       "strength": "背身拿球能护住，对抗不吃亏，还能等队友前插",
       "weakness": "最后一脚出球偏急，有两次直接传给了对方",
       "notes": [
@@ -821,9 +826,11 @@ ${ctxPart}
 - anonymous_index：number 为 null 时才需要，从 1 开始递增。有真实号码的球员此字段可省略。
 - team：固定 "home"（我方）。
 - score：本场综合评分，1~10 分（可带一位小数）。
-- ratings：四项分项评分，每项 0~10 整数：participation 参与度 / attack 进攻 / defense 防守 / decision 决策。
+- dimension_analysis：以上五个维度分别写 1~2 句具体观察与建议（每项约 30~60 字），只依据可见画面；无法评价填 null。跑动评价无球移动、接应与回撤；对抗评价护球、身体接触与重心稳定，不能沿用参与度或决策评分。
+- ratings：五项分项评分，每项 0~10 整数：running 跑动 / attack 进攻 / defense 防守 / duels 对抗 / passing 传球。
+  ★ passing 只评价可见传球的选线、时机、准确性与接应配合，不统计次数；未观察到可评价传球时该项填 null，不从综合分或其他分项推算。
   ★ 打分必须按本场实际表现拉开差距（差 3~5 / 正常 6~7 / 突出 8~9）—— 严禁所有人都给同一个分（如全给 7）。
-  ★ 分数要能对应到 notes 里写的具体动作；四项之间也要有差异（会跑位但不回防的人，参与度高、防守低）。
+  ★ 分数要能对应到 notes 里写的具体动作；五项之间也要有差异（会跑位但不回防的人，跑动高、防守低）。
   ★ 实在看不清某人的表现，score 和 ratings 填 null，不要瞎给分。
 - role：4~6 字角色概括（组织核心 / 进攻尖刀 / 边路快马 / 后场清扫 / 全能中场等），从实际表现推断，不要写"前锋""中场"这类笼统位置。
 - strength：本场【做得最好的一点】，一句 15~40 字，必须对应到画面里的具体动作。
@@ -932,9 +939,10 @@ function mergeRoundsToDashboard(rounds, durationSec, analysisMode = "team") {
           const r = p.ratings && typeof p.ratings === "object" ? p.ratings : null;
           if (!r) return null;
           const pick = (k) => { const n = asNum(r[k]); return n != null && n >= 0 && n <= 10 ? Math.round(n * 10) / 10 : null; };
-          const out = { participation: pick("participation"), attack: pick("attack"), defense: pick("defense"), decision: pick("decision") };
+          const out = { running: pick("running"), attack: pick("attack"), defense: pick("defense"), duels: pick("duels"), passing: pick("passing") };
           return Object.values(out).some((v) => v != null) ? out : null;
         })(),
+        dimension_analysis: Object.fromEntries(['attack','passing','defense','running','duels'].map(k=>[k,cleanText(p.dimension_analysis?.[k])||null])),
         role: cleanText(p.role),
         strength: cleanText(p.strength),
         weakness: cleanText(p.weakness),
@@ -1093,6 +1101,7 @@ function mergeRoundsToDashboard(rounds, durationSec, analysisMode = "team") {
         headline,
         // 兼容前端字段名（前端用 overall/recommendation/focus）
         overall: headline,
+        opponent: cleanText(teamRound?.opponent_performance)||null,
         highlight: highlightText,
         weakness: weaknessText,
         next_focus: nextFocus,

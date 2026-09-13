@@ -6,6 +6,7 @@ export interface InstantPair {
 }
 
 export interface InstantSummary {
+  opponent?: string
   overall?: string
   highlight?: string
   weakness?: string
@@ -60,7 +61,8 @@ export interface InstantPlayer {
   title?: string
   strength?: string
   weakness?: string
-  ratings?: { participation?: number; attack?: number; defense?: number; decision?: number }
+  ratings?: { participation?: number; attack?: number; defense?: number; decision?: number; passing?: number; running?: number; duels?: number }
+  dimensionAnalysis?: Partial<Record<'attack'|'passing'|'defense'|'running'|'duels',string>>
   highlight?: { label?: string; value?: number; note?: string }
   stats: InstantTeamStats
   insights: string[]
@@ -214,11 +216,12 @@ function player(value: unknown, index: number): InstantPlayer {
     title: text(first(item, ['title', '称号'])),
     strength: text(item.strength),
     weakness: text(item.weakness),
+    dimensionAnalysis: (() => {const v=object(item.dimension_analysis)||object(item.dimensionAnalysis);return v?{attack:text(v.attack),passing:text(v.passing),defense:text(v.defense),running:text(v.running),duels:text(v.duels)}:undefined})(),
     ratings: (() => {
       const values = object(item.ratings) || object(item.dimension_scores)
       if (!values) return undefined
       const valid = (keys: string[]) => { const n = number(first(values, keys)); return n != null && n >= 0 && n <= 10 ? n : undefined }
-      return { participation: valid(['participation', '参与度']), attack: valid(['attack', '进攻']), defense: valid(['defense', '防守']), decision: valid(['decision', '决策']) }
+      return { participation: valid(['participation', '参与度']), attack: valid(['attack', '进攻']), defense: valid(['defense', '防守']), decision: valid(['decision', '决策']), passing: valid(['passing', '传球']), running: valid(['running','跑动']), duels: valid(['duels','对抗']) }
     })(),
     highlight: (() => {
       const itemValue = object(first(item, ['highlight', '亮点']))
@@ -270,6 +273,7 @@ export function normalizeInstantDashboard(value: unknown): InstantAnalysisDashbo
     shots: pair(first(source, ['shots', 'clear_shots', 'shots_on_target', '明显射门', '射门'])) || pair(nestedShots),
     teamAverage: number(first(source, ['teamAverage', 'team_average', 'average_score', '球队平均分'])) || number(first(homeTeam, ['average_score', 'averageScore', '球队平均分'])),
     summary: {
+      opponent: text(first(summarySource,['opponent','opponent_performance'])),
       overall: text(first(summarySource, ['overall', 'overall_review', 'headline', '一句话总评', '总评', 'summary', '总结'])) || text(first(source, ['overall', 'overall_review', '一句话总评', '总评', 'summary', '总结'])),
       highlight: text(first(summarySource, ['highlight', '亮点', '最大亮点'])) || text(first(source, ['highlight', '亮点', '最大亮点'])),
       weakness: text(first(summarySource, ['weakness', 'shortcoming', '不足', '最大不足'])) || text(first(source, ['weakness', 'shortcoming', '不足', '最大不足'])),

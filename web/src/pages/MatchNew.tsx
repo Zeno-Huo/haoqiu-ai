@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react'
+import FootballNetwork from '../components/FootballNetwork'
 import VisualIcon from '../components/VisualIcon'
 import '../visual-refresh.css'
 import { Navigate, Link, useNavigate, useSearchParams } from 'react-router-dom'
@@ -132,7 +133,7 @@ export default function MatchNew() {
     <header className="vr-nav"><Link to={mode==='instant'?'/':'/match/new?mode=personal'} aria-label="返回"><VisualIcon name="back"/></Link><h1>上传视频</h1><span/></header>
     <div className="vr-upload-body">
       <input ref={inputRef} className="sr-only" type="file" accept=".mp4,.mov,video/mp4,video/quicktime" onChange={e=>selectFile(e.target.files?.[0])}/>
-      <button className="vr-picker" onClick={()=>inputRef.current?.click()} type="button"><span className="vr-pitch" aria-hidden="true"><i/><b/></span><span className="vr-upload-icon"><VisualIcon name={videoState==='ready'?'check':'upload'}/></span><strong>{videoName || '选择视频'}</strong><span>{videoState==='probing'?'正在读取视频…':videoName?videoDuration(videoMeta?.durationSeconds):'MP4 / MOV · 推荐 2–5 分钟'}</span></button>
+      <button className="vr-picker" onClick={()=>inputRef.current?.click()} type="button"><FootballNetwork variant="pitch"/><span className="vr-upload-icon"><VisualIcon name={videoState==='ready'?'check':'upload'}/></span><strong>{videoName || '选择视频'}</strong><span>{videoState==='probing'?'正在读取视频…':videoName?videoDuration(videoMeta?.durationSeconds):'MP4 / MOV · 推荐 2–5 分钟'}</span></button>
       <p className="vr-camera-note">高机位看得更全，平地拍摄可能有偏差</p>
       {videoState==='ready'&&<div className="vr-context"><label htmlFor="jersey-hint">{mode==='instant'?'哪边是我们？':'球衣提示（选填）'}</label><input id="jersey-hint" className="input-base" maxLength={60} value={mode==='instant'?jerseyHint:singleJerseyHint} onChange={e=>mode==='instant'?setJerseyHint(e.target.value):setSingleJerseyHint(e.target.value)} placeholder={mode==='instant'?'例如：白衣，开场在左侧':'例如：10号，红衣黑裤'}/></div>}
       {error&&<p className="flow-error" role="alert">{error}</p>}{!error&&notice&&<p className="vr-muted">{notice}</p>}

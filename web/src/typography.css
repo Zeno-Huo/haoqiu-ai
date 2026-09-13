@@ -1,0 +1,39 @@
+/* Shared typography contract. Keep color and layout in their own stylesheets. */
+:root {
+  --type-caption:12px;
+  --type-body:14px;
+  --type-label:14px;
+  --type-section:16px;
+  --type-page:20px;
+  --type-summary:18px;
+  --type-score:clamp(72px,20vw,96px);
+  --weight-regular:400;
+  --weight-medium:500;
+  --weight-semibold:600;
+  --weight-bold:700;
+}
+body{font-weight:var(--weight-regular);line-height:1.6}
+.vr-page,.home-page{font-size:var(--type-body)}
+.vr-page .vr-nav h1,.vr-report .vr-nav h1{font-size:var(--type-page);font-weight:var(--weight-semibold);line-height:1.3;letter-spacing:0}
+.vr-report h2,.vr-report .vr-roster>h2,.report-personal>.performance-radar h2,.vr-dimension-analysis>h2{font-size:var(--type-section);font-weight:var(--weight-semibold);line-height:1.4;letter-spacing:0}
+.vr-report .vr-notes h2,.vr-report .vr-advice h2,.vr-report .vr-player-copy h3,.vr-dimension-analysis h3{font-size:var(--type-label);font-weight:var(--weight-medium);line-height:1.5;letter-spacing:0}
+.vr-report .vr-summary p{font-size:var(--type-summary);font-weight:var(--weight-medium);line-height:1.6;letter-spacing:0}
+.vr-report .vr-player-copy p,.vr-report .vr-player-copy summary,.vr-report .vr-notes p,.vr-report .vr-notes summary,.vr-report .vr-advice p,.vr-report .vr-advice summary,.vr-dimension-analysis p,.vr-dimension-analysis summary{font-size:var(--type-body);font-weight:var(--weight-regular);line-height:1.75}
+.vr-report .vr-score p,.vr-report .vr-score>span,.vr-report .vr-summary>span,.vr-report .vr-tags span,.vr-report .vr-player-score em,.vr-preview-label,.vr-muted,.vr-camera-note,.vr-loading footer p,.vr-loading .vr-steps li,.home-tilt-control{font-size:var(--type-caption);font-weight:var(--weight-regular);line-height:1.5;letter-spacing:0}
+.vr-report .vr-score>b,.report-personal .vr-score>b{font-size:var(--type-score);font-weight:var(--weight-bold);line-height:1;letter-spacing:-.04em;font-variant-numeric:tabular-nums}
+.vr-report .vr-player-score b{font-size:28px;font-weight:var(--weight-semibold);line-height:1.2;font-variant-numeric:tabular-nums}
+.vr-dimension-analysis span{font-size:20px;font-weight:var(--weight-semibold);line-height:1.2}
+.vr-page .vr-primary,.vr-report .vr-share,.vr-page .vr-secondary,.home-mode-action{font-size:16px;font-weight:var(--weight-semibold);line-height:1.4;letter-spacing:0}
+.vr-page .vr-picker strong{font-size:24px;font-weight:var(--weight-semibold);line-height:1.4}
+.vr-page .vr-picker>span:last-child,.vr-page .vr-context label,.vr-loading .vr-filename,.vr-reassurance p{font-size:var(--type-body);font-weight:var(--weight-regular);line-height:1.6}
+.vr-loading>h2{font-size:var(--type-page);font-weight:var(--weight-semibold);line-height:1.4}
+.vr-ring b{font-weight:var(--weight-bold)}
+.home-page .home-title{font-size:clamp(40px,10vw,64px);font-weight:var(--weight-bold);line-height:1.12;letter-spacing:-.04em}
+.home-page .home-mode-label{font-size:28px;font-weight:var(--weight-semibold);line-height:1.3;letter-spacing:-.02em}
+.home-page .home-mode-kicker{font-size:var(--type-label);font-weight:var(--weight-medium)}
+.home-page .home-value,.home-page .home-mode-note{font-size:var(--type-body);font-weight:var(--weight-regular);line-height:1.6}
+.home-page .home-kicker,.home-page .home-mode-features,.home-page .home-footer-note{font-size:var(--type-caption);font-weight:var(--weight-regular);line-height:1.5}
+/* SVG labels are viewBox units, not CSS pixels: keep their proportions with the chart. */
+.performance-radar .radar-label{font-weight:var(--weight-regular)}
+.performance-radar .radar-value{font-weight:var(--weight-semibold)}
+.vr-page .vr-copy[open] summary{font-size:0}.vr-page .vr-copy summary>span{font-size:var(--type-caption)}

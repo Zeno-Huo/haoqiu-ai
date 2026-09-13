@@ -9,7 +9,7 @@ export async function exportMatchPoster(report: Poster) {
   function wrap(value:string,y:number,size:number,maxLines=3){let line='',row=0;ctx.font=`600 ${size}px sans-serif`;for(const ch of Array.from(value)){if(ctx.measureText(line+ch).width>660){text(line,60,y+row*(size+12),size);line='';if(++row===maxLines)return}line+=ch}if(line)text(line,60,y+row*(size+12),size)}
   text('好球 Ai  /  '+report.title,60,70,24,'#83d9ac');text(report.preview?'设计示例 · 非真实分析':report.target,60,122,25)
   text(report.score,52,285,154,'#83d9ac');text('本场评分 / 10',62,328,22,'#a5b8ae');wrap(report.headline,400,34,2)
-  report.stats.forEach((s,i)=>{const x=60+i*173;text(s.label,x,525,23,'#a5b8ae');text(s.value,x,575,38)})
+  report.stats.forEach((s,i)=>{const x=60+i*(660/Math.max(report.stats.length,1));text(s.label,x,525,23,'#a5b8ae');text(s.value,x,575,38)})
   text('★ 本场亮点',60,650,25,'#83d9ac');wrap(report.highlight,696,26,3)
   text('调整建议',60,844,25,'#e3ae69');wrap(report.advice,892,25,3)
 
