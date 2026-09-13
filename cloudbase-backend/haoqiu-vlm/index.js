@@ -598,6 +598,8 @@ ${ctxPart}
       "unconfirmed_number": false,
       "team": "home",
       "role": "进攻尖刀",
+      "score": 7.5,
+      "ratings": {"participation": 8, "attack": 8, "defense": 5, "decision": 6},
       "strength": "背身拿球能护住，对抗不吃亏，还能等队友前插",
       "weakness": "最后一脚出球偏急，有两次直接传给了对方",
       "notes": [
@@ -620,6 +622,11 @@ ${ctxPart}
   · 严禁把无号码球员硬编为 "10""7" 这类虚假号码。
 - anonymous_index：number 为 null 时才需要。从 1 开始按出场顺序或重要性递增的整数。有真实号码的球员此字段可省略。
 - team：固定 "home"（我方）。
+- score：本场综合评分，1~10 分（可带一位小数）。
+- ratings：四项分项评分，每项 0~10 整数：participation 参与度 / attack 进攻 / defense 防守 / decision 决策。
+  ★ 打分必须按本场实际表现拉开差距（差 3~5 / 正常 6~7 / 突出 8~9）—— 严禁所有人都给同一个分（如全给 7）。
+  ★ 分数要能对应到 notes 里写的具体动作；四项之间也要有差异（会跑位但不回防的人，参与度高、防守低）。
+  ★ 实在看不清某人的表现，score 和 ratings 填 null，不要瞎给分。
 - role：4~6 字的角色概括，从你看到的实际表现推断：组织核心 / 进攻尖刀 / 边路快马 / 后场清扫 / 全能中场 / 定位球点 / 中前场组织者 等。
   ⚠️ 不要写"前锋""中场""后卫""门将"这类笼统位置，也不要硬猜具体位置。
 - strength：这名球员本场【做得最好的一点】，一句 15~40 字，必须对应到画面里的具体动作。
@@ -639,9 +646,9 @@ ${ctxPart}
 - 如果一个具体动作都说不出，players 才返回空数组 []。`;
 }
 
-// 第 1 轮：团队层面评价（亮点 / 不足 / 关键片段 / 比分）。
-// 2026-09-13 重构：原「传球 / 射门 / 防守」三个统计轮已删除（不再统计次数），
-// 关键片段改由本轮的 moments 承载（只挑值得回看的，不做流水账）。
+// 第 1 轮：团队层面评价（亮点 / 不足 / 比分）。
+// 2026-09-13 重构：原「传球 / 射门 / 防守」三个统计轮已删除（不再统计次数）。
+// 2026-09-13 二次重构：移除关键片段 moments（新版报告页不展示关键片段）。
 function buildTeamPrompt(durationSec, ctx) {
   const ctxPart = buildContextString(ctx);
   return `你是足球视频分析员。请观看这段完整比赛视频（总时长约 ${Math.round(durationSec)} 秒）。
@@ -662,9 +669,6 @@ ${ctxPart}
   "weaknesses": [
     {"title": "最后一传质量差", "detail": "多次推进到禁区前沿后传球直接送到对方脚下", "time_hint": "下半场反复出现"}
   ],
-  "moments": [
-    {"time_seconds": 35.0, "clock": null, "type": "goal", "note": "禁区外远射破门", "unconfirmed": false}
-  ],
   "next_focus": "下一阶段建议（具体可执行，如'前场拿球后优先找倒三角回传点'）"
 }
 
@@ -673,12 +677,6 @@ ${ctxPart}
   ⚠️ 必须是画面里真实发生的事。禁止"拼劲足""态度好""配合不错"这类没有信息量的评价。
 - weaknesses：团队本场【做得差的地方】，2~3 条，格式同上。
   ⚠️ 不要和 highlights 说同一件事。
-- moments：全场【最值得回看的 3~6 个片段】（进球、明显射门、单刀、关键抢断、致命失误等）。
-  · 这是给用户的"精彩 / 关键片段"列表，不是流水账 —— 只挑真正值得点开回看的。
-  · time_seconds 填视频内秒数（0 ~ ${Math.round(durationSec)}）；记不准就填 null，不要瞎编。
-  · clock：画面上有比赛计时器 / 记分牌就填看到的时间文本（如 "23:41"）；看不到填 null，不要推算。
-  · type 用 goal / shot / tackle / interception / turnover / save / other。
-  · ⚠️ 不要把普通传球列进来 —— 那不是关键片段。
 - next_focus：针对 weaknesses 给出的、下一场能立刻执行的一条建议。
 - headline：一句话总评。写不出具体判断就填 null，不要凑。
 
@@ -739,7 +737,7 @@ ${ctxPart}
 }
 
 // 个人比赛模式 · 第 1 轮：聚焦单名球员的整体表现（亮点 / 不足 / 关键片段 / 比分）。
-// 复用团队模式的输出结构（highlights/weaknesses/moments/headline/next_focus/score），
+// 复用团队模式的输出结构（highlights/weaknesses/headline/next_focus/score），
 // 这样 mergeRoundsToDashboard 无需改动即可复用；只是把「团队」换成「这名球员」。
 function buildPersonalOverviewPrompt(durationSec, ctx) {
   const ctxPart = buildPersonalContextString(ctx);
@@ -747,7 +745,7 @@ function buildPersonalOverviewPrompt(durationSec, ctx) {
 
 ${ctxPart}
 
-【任务】从【个人】层面评价这名球员本场的表现：做得好的地方、做得差的地方，以及他最值得回看的几个片段。不统计传球、射门这些次数。
+【任务】从【个人】层面评价这名球员本场的表现：做得好的地方、做得差的地方。不统计传球、射门这些次数。
 
 【输出】只输出JSON（不要其他文字）：
 {
@@ -761,9 +759,6 @@ ${ctxPart}
   "weaknesses": [
     {"title": "出球偏急", "detail": "有两次在对方逼抢下仓促出脚直接丢球", "time_hint": "下半场"}
   ],
-  "moments": [
-    {"time_seconds": 35.0, "clock": null, "type": "shot", "note": "禁区内抢点射门偏出", "unconfirmed": false}
-  ],
   "next_focus": "下一阶段建议（具体可执行，如'接球前先观察两侧队友，减少背身强突'）"
 }
 
@@ -771,11 +766,6 @@ ${ctxPart}
 - highlights：这名球员本场【做得好的地方】，2~3 条。title 4~8 字概括，detail 20~50 字写清具体表现。
   ⚠️ 必须是画面里真实发生的动作。禁止"拼劲足""态度好""表现不错"这类没有信息量的评价。
 - weaknesses：这名球员本场【做得差的地方】，2~3 条，格式同上。不要和 highlights 说同一件事。
-- moments：这名球员【最值得回看的 3~6 个片段】（进球、射门、突破、关键传球、抢断、失误等，都必须是他本人参与的）。
-  · time_seconds 填视频内秒数（0 ~ ${Math.round(durationSec)}）；记不准就填 null，不要瞎编。
-  · clock：画面上有比赛计时器 / 记分牌就填看到的时间文本（如 "23:41"）；看不到填 null，不要推算。
-  · type 用 goal / shot / dribble / pass / tackle / interception / turnover / save / other。
-  · 只列这名球员本人参与的片段，不要把队友的精彩片段算进来。
 - next_focus：针对 weaknesses 给出的、下一场能立刻执行的一条建议。
 - headline：一句话总评。写不出具体判断就填 null，不要凑。
 
@@ -808,6 +798,8 @@ ${ctxPart}
       "unconfirmed_number": false,
       "team": "home",
       "role": "进攻尖刀",
+      "score": 7.5,
+      "ratings": {"participation": 8, "attack": 8, "defense": 5, "decision": 6},
       "strength": "背身拿球能护住，对抗不吃亏，还能等队友前插",
       "weakness": "最后一脚出球偏急，有两次直接传给了对方",
       "notes": [
@@ -828,6 +820,11 @@ ${ctxPart}
   · 严禁把无号码球员硬编为 "10""7" 这类虚假号码。
 - anonymous_index：number 为 null 时才需要，从 1 开始递增。有真实号码的球员此字段可省略。
 - team：固定 "home"（我方）。
+- score：本场综合评分，1~10 分（可带一位小数）。
+- ratings：四项分项评分，每项 0~10 整数：participation 参与度 / attack 进攻 / defense 防守 / decision 决策。
+  ★ 打分必须按本场实际表现拉开差距（差 3~5 / 正常 6~7 / 突出 8~9）—— 严禁所有人都给同一个分（如全给 7）。
+  ★ 分数要能对应到 notes 里写的具体动作；四项之间也要有差异（会跑位但不回防的人，参与度高、防守低）。
+  ★ 实在看不清某人的表现，score 和 ratings 填 null，不要瞎给分。
 - role：4~6 字角色概括（组织核心 / 进攻尖刀 / 边路快马 / 后场清扫 / 全能中场等），从实际表现推断，不要写"前锋""中场"这类笼统位置。
 - strength：本场【做得最好的一点】，一句 15~40 字，必须对应到画面里的具体动作。
 - weakness：本场【最该改的一点】，一句 15~40 字，必须对应到画面里的具体动作。确实挑不出问题就填 null。
@@ -875,37 +872,9 @@ function mergeRoundsToDashboard(rounds, durationSec, analysisMode = "team") {
   const teamRound = rounds.team?.parsed;
   const techniqueRound = rounds.technique?.parsed;
 
-  // --- 收集关键片段（team 轮的 moments：只挑值得回看的，不是流水账统计）---
-  const allEvents = [];
-  for (const parsed of [teamRound]) {
-    if (parsed && Array.isArray(parsed.moments)) {
-      for (const evt of parsed.moments) {
-        allEvents.push({
-          time_seconds: evt.time_seconds ?? null,
-          clock: typeof evt.clock === "string" && evt.clock.trim() ? evt.clock.trim() : null,
-          type: evt.type ?? null,
-          team: evt.team ?? null,
-          player_number: evt.player_number ?? null,
-          outcome: evt.outcome ?? null,
-          unconfirmed: asBool(evt.unconfirmed),
-          note: evt.note ?? null,
-          source: "qwen-vlm",
-        });
-      }
-    }
-  }
-  allEvents.sort((a, b) => (a.time_seconds || 0) - (b.time_seconds || 0));
-
-  // 去重：同类型 + 同球员 + 时间±1.5秒 → 只留第一条
+  // 2026-09-13：关键片段 moments 已从 prompt 移除（新版报告页不展示关键片段），
+  // 这里不再收集事件 —— deduped 恒为空，下游的球员 events / 球队统计自然为空。
   const deduped = [];
-  for (const evt of allEvents) {
-    const dup = deduped.find((e) =>
-      e.type === evt.type &&
-      e.player_number === evt.player_number &&
-      Math.abs((e.time_seconds || 0) - (evt.time_seconds || 0)) < 1.5
-    );
-    if (!dup) deduped.push(evt);
-  }
 
   // --- 球员（来自第1轮，事件补充统计）---
   const cleanText = (v) => (typeof v === "string" && v.trim() ? v.trim() : null);
@@ -957,7 +926,15 @@ function mergeRoundsToDashboard(rounds, durationSec, analysisMode = "team") {
         name: null,
         // 位置识别实测不可靠（会把后卫认成前锋），已彻底不再输出
         position: null,
-        score: null,
+        // 评分由模型给出（1~10）；模型没给就是 null（前端显示「—」），绝不编造。
+        score: (() => { const n = asNum(p.score); return n != null && n >= 0 && n <= 10 ? Math.round(n * 10) / 10 : null; })(),
+        ratings: (() => {
+          const r = p.ratings && typeof p.ratings === "object" ? p.ratings : null;
+          if (!r) return null;
+          const pick = (k) => { const n = asNum(r[k]); return n != null && n >= 0 && n <= 10 ? Math.round(n * 10) / 10 : null; };
+          const out = { participation: pick("participation"), attack: pick("attack"), defense: pick("defense"), decision: pick("decision") };
+          return Object.values(out).some((v) => v != null) ? out : null;
+        })(),
         role: cleanText(p.role),
         strength: cleanText(p.strength),
         weakness: cleanText(p.weakness),
@@ -1124,6 +1101,12 @@ function mergeRoundsToDashboard(rounds, durationSec, analysisMode = "team") {
       };
     })(),
     players,
+    // 球队评分 = 队内有评分球员的平均分（一个都没有评分就是 null）
+    teamAverage: (() => {
+      const rated = players.filter((p) => typeof p.score === "number");
+      if (!rated.length) return null;
+      return Math.round((rated.reduce((s, p) => s + p.score, 0) / rated.length) * 10) / 10;
+    })(),
     technique_summary: techniqueSummary,
     events: deduped,
     source_frames: [],
