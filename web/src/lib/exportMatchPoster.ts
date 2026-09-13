@@ -12,7 +12,7 @@ export async function exportMatchPoster(report: Poster) {
   report.stats.forEach((s,i)=>{const x=60+i*173;text(s.label,x,525,23,'#a5b8ae');text(s.value,x,575,38)})
   text('★ 本场亮点',60,650,25,'#83d9ac');wrap(report.highlight,696,26,3)
   text('调整建议',60,844,25,'#e3ae69');wrap(report.advice,892,25,3)
-  
+
   const blob=await new Promise<Blob>((resolve,reject)=>canvas.toBlob(b=>b?resolve(b):reject(new Error('Export failed')),'image/png'))
   return blob
 }
