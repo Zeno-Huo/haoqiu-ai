@@ -41,9 +41,9 @@ const vlmModel = process.env.VLM_MODEL || "qwen3-vl-plus";
 const cdnBase = (process.env.COS_CDN_BASE || process.env.CDN_BASE || "").trim().replace(/\/$/, "");
 
 // 视频采样参数：让千问自己负责采样，不再本地抽帧（避免维护 FFmpeg 抽帧逻辑）。
-// 体育高速运动场景用高于默认(2)的 fps。max_frames / total_pixels 沿用保守值：
-// 512 帧 + 67108864 总像素（约 65536 图像 token），在 qwen3-vl-plus 合法范围内（上限 2000 / 134217728），
-// 既够 5 分钟足球视频的号码/事件识别，也控制 token 成本。均可 env 覆盖。
+// 体育高速运动场景用高于默认(2)的 fps。
+// total_pixels 这里是**基线值**（短视频用），长视频会被 computeVideoTotalPixels() 动态抬高，
+// 保证单帧像素不低于 VLM_FRAME_TARGET_PIXELS。三个参数均可 env 覆盖。
 const vlmVideoFps = Number(process.env.VLM_VIDEO_FPS) || 4;
 const vlmVideoMaxFrames = Number(process.env.VLM_VIDEO_MAX_FRAMES) || 512;
 const vlmVideoTotalPixels = Number(process.env.VLM_VIDEO_TOTAL_PIXELS) || 67108864;
@@ -156,16 +156,17 @@ async function postToQwen(body) {
   return text;
 }
 
-async function callQwenWithVideo(videoUrl, promptText) {
+async function callQwenWithVideo(videoUrl, promptText, durationSec) {
   // 把完整视频 URL 交给模型，由模型按以下参数自行采样（不本地抽帧）：
   // - fps：体育高速运动需高于默认 2，才能抓清快速动作（冲刺/快传/变向）
-  // - max_frames：qwen-vl-max 抽帧上限 512，长视频也能保留足够帧数
-  // - total_pixels：所有抽取帧的总像素预算（单帧像素 × 帧数），封顶以控制 token 消耗
+  // - max_frames：抽帧上限，长视频也能保留足够帧数
+  // - total_pixels：所有抽取帧的总像素预算（单帧像素 × 帧数），按时长动态抬高
+  //   （长视频帧数被封顶后，固定预算会把单帧摊薄到 483×272，球衣号码就认不出了）
   const videoContent = {
     video: videoUrl,
     fps: vlmVideoFps,
     max_frames: vlmVideoMaxFrames,
-    total_pixels: vlmVideoTotalPixels,
+    total_pixels: computeVideoTotalPixels(durationSec),
   };
   const body = {
     model: vlmModel,
@@ -228,7 +229,8 @@ async function geminiDeleteFile(name) {
  * 说明 Google 的视频转码是**随机失败**，不是上传损坏、也不是编码问题。
  * 后续对照实验进一步证明：干净 720p 片同样随机 FAILED（同一文件 3 次 = FAILED/ACTIVE/ACTIVE），
  * 即 FAILED 与画质/分辨率无关，纯 Google 侧随机。所以不靠压缩规避，只靠重试退避扛。
- *   —— 压缩只会把画质弄坏、让分析变胡扯，Gemini 转码阈值已贴着中转上限 100MB（见 VLM_TRANSCODE_BYTES）。
+ *   —— 既然与画质无关，压缩就不是为了规避 FAILED。Gemini 分支仍贴着中转上限 100MB 才压；
+ *      千问分支已于 2026-09-14 改为超 20MB 即压到 1280 宽（见 VLM_TRANSCODE_BYTES）。
  * 这里失败自动重试（默认 6 次，指数退避），把随机失败率压到千分级。
  */
 const geminiUploadRetries = Number(process.env.GEMINI_UPLOAD_RETRIES) || 6;
@@ -346,15 +348,40 @@ async function callGeminiWithVideo(fileUri, mimeType, promptText) {
 
 // 千问硬限 150MB 留余量；Gemini 走 Pages 中继上传，Cloudflare 免费版请求体上限 100MB。
 const VLM_MAX_BYTES = vlmProvider === "gemini" ? 100 * 1024 * 1024 : 120 * 1024 * 1024;
-// 触发转码的体积阈值 = 中转上传上限（Gemini 100MB / 千问 120MB），超过才压缩。
-// 此前误以为「4K 原片直接传更易触发 Google 随机 FAILED」，对照实验证明 FAILED 与画质无关，
-// 压小反而弄坏画质、分析变胡扯。所以阈值贴着上限，能直传就直传、保留原画质。
-const VLM_TRANSCODE_BYTES = vlmProvider === "gemini" ? geminiMaxUploadBytes : 120 * 1024 * 1024;
-// 压缩后的目标体积：Gemini 留 10MB 余量（90MB），确保压完一定低于 100MB 中转上限。
-const VLM_TRANSCODE_TARGET_BYTES = vlmProvider === "gemini" ? 90 * 1024 * 1024 : VLM_TRANSCODE_BYTES;
-const VLM_TRANSCODE_MAX_KBPS = vlmProvider === "gemini" ? 8000 : 15000;
-const VLM_MAX_SECONDS = 300; // 目标 5 分钟：既是产品建议时长，也让 5 轮 VLM + 压缩能塞进 900s 超时
+// 触发转码的体积阈值（超过才压，**不是压缩目标**）。
+// 2026-09-14 用户拍板：不再「贴着上传上限才压」，改为超过 20MB 就压。
+const VLM_TRANSCODE_BYTES = vlmProvider === "gemini" ? geminiMaxUploadBytes : 20 * 1024 * 1024;
+// 压缩目标：**恒定像素密度（bits per pixel）**——体积超限时降「分辨率」而不是降画质密度。
+// 依据（2026-09-14 官方文档查证）：模型单帧像素 = total_pixels ÷ 帧数；长视频每帧只看 ~483 宽，
+//   所以长视频还压 1280 宽纯属浪费，降到与模型采样匹配的宽度、把码率省下来更划算。
+// 0.1bpp 对应 1280×720@30fps ≈ 2765kbps，是标准在线视频画质水平。
+const VLM_TRANSCODE_BPP = 0.1;
+const VLM_TRANSCODE_MAX_WIDTH = 1280;
+// 再低就真的糊了（模型长视频单帧本身只有 483 宽），设个保底。
+const VLM_TRANSCODE_MIN_WIDTH = 640;
+// 单帧目标像素 ≈ 683×384。长视频帧数被 max_frames 封顶后单帧会被摊薄得很小
+// （15 分钟时仅 483×272，球衣号码基本看不清），所以按时长动态抬高总像素预算。
+const VLM_FRAME_TARGET_PIXELS = 262144;
+// 总像素硬上限：官方 Qwen3-VL-Plus 档位值（131072×32×32），别超。
+const VLM_TOTAL_PIXELS_CAP = 134217728;
+// 单次分析的时长上限。2026-09-14 从 5 分钟放宽到 15 分钟。
+// ⚠️ 云函数 timeout 上限就是 900 秒（cloudbaserc.json），15 分钟视频的「压缩 + 3 轮分析」贴着这条线，见下方 ensureVlmPlayable 注释。
+const VLM_MAX_SECONDS = 900;
 const AUDIO_KBPS = 96;
+
+/**
+ * 按时长算视频总像素预算（total_pixels）。
+ * 短视频沿用默认 67M（够用且省 token）；长视频帧数被 max_frames 封顶后单帧会被摊薄，
+ * 所以抬高预算，保证「单帧像素 ≥ VLM_FRAME_TARGET_PIXELS」。
+ *   例：33 秒(132 帧) → 67M 不变；≥ 257 帧(约 64 秒) 起逐级抬升；512 帧封顶 → 134M（单帧 683×384）。
+ * ⚠️ 134M 是官方 Qwen3-VL-Plus 档位值；若线上模型拒绝该值，把 VLM_TOTAL_PIXELS_CAP 调回 67108864 即可回退。
+ */
+function computeVideoTotalPixels(durationSec) {
+  const sec = Math.max(0, Number(durationSec) || 0);
+  const frames = Math.min(Math.max(4, Math.ceil(sec * vlmVideoFps)), vlmVideoMaxFrames);
+  const needed = frames * VLM_FRAME_TARGET_PIXELS;
+  return Math.max(vlmVideoTotalPixels, Math.min(needed, VLM_TOTAL_PIXELS_CAP));
+}
 
 // 注意：ffmpeg-static 的二进制是 postinstall 才下载的，云端装依赖时经常下不到（ENOENT）。
 // @ffmpeg-installer/ffmpeg 把二进制直接打进 npm 包，云端按平台装 linux-x64，更可靠。
@@ -469,18 +496,24 @@ async function ensureVlmPlayable({ signedUrl, sizeBytes, durationSec, taskId, on
 
   let outPath;
   try {
-    if (onStage) await onStage("compressing", tooLong ? "视频超过 5 分钟，正在截取并压缩前 5 分钟" : "视频过大，正在压缩到可分析大小");
-    console.log(`[vlm] 开始压缩: ${(sizeBytes / 1048576).toFixed(1)}MB / ${Math.round(rawSeconds)}s -> 目标 ${(VLM_TRANSCODE_TARGET_BYTES / 1048576).toFixed(0)}MB / ${seconds}s`);
+    if (onStage) await onStage("compressing", tooLong ? `视频超过 ${Math.round(VLM_MAX_SECONDS / 60)} 分钟，正在截取并压缩前 ${Math.round(VLM_MAX_SECONDS / 60)} 分钟` : "视频过大，正在压缩到可分析大小");
     outPath = path.join(os.tmpdir(), `vlm_${taskId}.mp4`);
-    let videoKbps = Math.floor((VLM_TRANSCODE_TARGET_BYTES * 8) / Math.max(1, seconds) / 1000) - AUDIO_KBPS;
-    videoKbps = Math.max(500, Math.min(videoKbps, VLM_TRANSCODE_MAX_KBPS));
+    // 体积上限 → 允许的码率（系数：0.8 留体积余量、1.3 抵消 -maxrate 瞬时超发、AUDIO_KBPS 静音轨）
+    const volumeCapKbps = Math.floor((VLM_MAX_BYTES * 0.8 * 8) / Math.max(1, seconds) / 1000 / 1.3) - AUDIO_KBPS;
+    // 按恒定像素密度反推「允许的宽度」（16:9），夹在 [MIN_WIDTH, MAX_WIDTH] 之间。
+    // 效果：短视频 1280 宽 @2765kbps；5 分钟 →1080 宽；15 分钟 →约 670 宽（仍高于模型采样宽度）。
+    const capPixels = Math.min((volumeCapKbps * 1000) / (VLM_TRANSCODE_BPP * 30), VLM_TRANSCODE_MAX_WIDTH * 720);
+    let targetWidth = Math.floor(Math.sqrt(capPixels * 16 / 9) / 2) * 2;
+    targetWidth = Math.max(VLM_TRANSCODE_MIN_WIDTH, Math.min(VLM_TRANSCODE_MAX_WIDTH, targetWidth));
+    const videoKbps = Math.max(400, Math.floor((targetWidth * targetWidth * 9 / 16) * VLM_TRANSCODE_BPP * 30 / 1000));
+    console.log(`[vlm] 开始压缩: ${(sizeBytes / 1048576).toFixed(1)}MB / ${Math.round(rawSeconds)}s -> ${targetWidth}宽 @${videoKbps}kbps / ${seconds}s`);
     const args = [
       "-y", "-i", signedUrl,
       // 无声源视频会导致 Gemini 转码失败（实测 code 13），所以恒定挂一条静音 AAC 音轨兜底
       "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100",
       "-t", String(seconds),
       "-map", "0:v:0", "-map", "1:a:0",
-      "-vf", "scale=w='min(1280,iw)':h=-2,fps=30",
+      "-vf", `scale=w='min(${targetWidth},iw)':h=-2,fps=30`,
       // ultrafast：云函数约 1 核 CPU，实测 ~1.2x 实时。码率给足（3Mbps+）可抵消 preset 的质量损失。
       "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-profile:v", "main",
       "-b:v", `${videoKbps}k`, "-maxrate", `${Math.round(videoKbps * 1.3)}k`, "-bufsize", `${videoKbps * 2}k`,
@@ -494,7 +527,7 @@ async function ensureVlmPlayable({ signedUrl, sizeBytes, durationSec, taskId, on
     const plainArgs = [
       "-y", "-i", signedUrl,
       "-t", String(seconds),
-      "-vf", "scale=w='min(1280,iw)':h=-2,fps=30",
+      "-vf", `scale=w='min(${targetWidth},iw)':h=-2,fps=30`,
       "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-profile:v", "main",
       "-b:v", `${videoKbps}k`, "-maxrate", `${Math.round(videoKbps * 1.3)}k`, "-bufsize", `${videoKbps * 2}k`,
       "-c:a", "aac", "-b:a", `${AUDIO_KBPS}k`, "-ac", "2",
@@ -1201,7 +1234,7 @@ exports.main = async (event) => {
       const videoUrl = prepared.url;
       const durationSec = prepared.seconds;
       console.log(`[vlm] 输入准备: ${prepared.reason}`);
-      console.log(`[vlm] 视频采样参数: fps=${vlmVideoFps}, max_frames=${vlmVideoMaxFrames}, total_pixels=${vlmVideoTotalPixels}`);
+      console.log(`[vlm] 视频采样参数: fps=${vlmVideoFps}, max_frames=${vlmVideoMaxFrames}, total_pixels=${computeVideoTotalPixels(durationSec)}（本片动态值，基线默认 ${vlmVideoTotalPixels}）`);
 
       // 供应商级错误（欠费 / 鉴权 / 限流）命中即短路：这类错误每一轮都会以同样方式失败，
       // 跑完 6 轮只是浪费时间与额度，还会把真实原因埋在一堆「第 N 轮失败」里。
@@ -1250,7 +1283,7 @@ exports.main = async (event) => {
           const uploaded = await geminiUploadVideo(videoUrl, taskId, prepared.localPath);
           askVideo = (prompt) => callGeminiWithVideo(uploaded.uri, uploaded.mimeType, prompt);
         } else {
-          askVideo = (prompt) => callQwenWithVideo(videoUrl, prompt);
+          askVideo = (prompt) => callQwenWithVideo(videoUrl, prompt, durationSec);
         }
       } catch (uploadErr) {
         // 把「有没有压缩、压缩为什么失败」一起带出去，方便定位（否则只能看到一句 FAILED）
@@ -1300,7 +1333,7 @@ exports.main = async (event) => {
       const dashboard = mergeRoundsToDashboard(rounds, durationSec, analysisMode);
       if (prepared?.reason) dashboard.notes = [...(dashboard.notes || []), `视频预处理：${prepared.reason}`];
       if (prepared?.compressed) dashboard.notes = [...(dashboard.notes || []), `（已压缩至 ${((prepared.bytes || 0) / 1048576).toFixed(0)}MB / ${Math.round(durationSec)}秒后分析）`];
-      dashboard.notes = [...(dashboard.notes || []), `视频采样: fps=${vlmVideoFps}/max_frames=${vlmVideoMaxFrames}/total_pixels=${vlmVideoTotalPixels}`];
+      dashboard.notes = [...(dashboard.notes || []), `视频采样: fps=${vlmVideoFps}/max_frames=${vlmVideoMaxFrames}/total_pixels=${computeVideoTotalPixels(durationSec)}`];
       const rawContent = JSON.stringify(dashboard);
 
       // 用 parseVlmText 统一规范化（幂等）
